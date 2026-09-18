@@ -1,0 +1,10 @@
+# Lua / editors / tooling
+*.luac
+.luarc.json
+.vs/
+.idea/
+.cache/
+.claude/
+# throwaway interpreters
+lua.exe
+*.obj
