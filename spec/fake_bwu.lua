@@ -21,6 +21,9 @@ function M.new(opts)
       { server_index = 57, type_id = 9999, tile = { x = 3202, y = 3200, plane = 0 }, health_ratio = -1 },
     },
     actions = {},   -- recorded queue_action calls
+    walks   = {},   -- recorded walk() calls (executor)
+    walk_arrives = (opts.walk_arrives ~= false),  -- what walk() returns
+    walk_cancelled = false,
   }
   local bwu = { PROTOCOL_VERSION = 19, _state = state }
 
@@ -48,6 +51,16 @@ function M.new(opts)
     state.actions[#state.actions + 1] = { id = id, p1 = p1, p2 = p2, p3 = p3 }
     return true
   end
+  function bwu.walk(_, x, y, plane, radius)
+    state.walks[#state.walks + 1] = { x = x, y = y, plane = plane, radius = radius }
+    -- The real executor moves the player; the fake just lands them on the goal on arrival.
+    if state.walk_arrives then
+      state.self_.tile = { x = x, y = y, plane = plane }
+      return true
+    end
+    return false, "did not arrive"
+  end
+  function bwu.walk_cancel(_) state.walk_cancelled = true end
   function bwu.path(_, x, y, plane)
     -- straight-line steps from self toward (x,y), matching the native stub's shape
     local sx, sy = state.self_.tile.x, state.self_.tile.y

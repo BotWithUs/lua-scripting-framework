@@ -74,4 +74,19 @@ function Game:path(x, y, plane)
   return steps
 end
 
+-- Walk all the way to (x, y, plane) within `radius` tiles, via the native executor:
+-- it plans, walks, re-plans, and EXECUTES transitions (doors/stairs/teleports/dialogue),
+-- returning only when the walk terminates. BLOCKS for the whole route -- unlike walk_to,
+-- which queues a single hop. Returns (true) on arrival, or (false, err) otherwise. Cancel
+-- an in-flight walk from another coroutine/thread with :walk_cancel().
+function Game:walk(x, y, plane, radius)
+  local ok, err = surface().walk(self._host, x, y, plane or 0, radius or 1)
+  return ok == true, err
+end
+
+-- Request cancellation of an in-flight :walk (idempotent).
+function Game:walk_cancel()
+  return surface().walk_cancel(self._host)
+end
+
 return Game

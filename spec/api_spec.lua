@@ -89,6 +89,29 @@ T["script lifecycle: on_start/on_loop/on_stop run, paced, bounded"] = function(a
   assert_(seen.stop == 1, "on_stop once")
 end
 
+T["walk: executor call forwards goal+radius and reports arrival"] = function(assert_)
+  _G.bwu = fake_bwu.new()
+  local g = bot.Game.attach()
+  local arrived, err = g:walk(3165, 3486, 0, 3)
+  assert_(arrived == true, "walk reports arrival")
+  assert_(err == nil, "no error on arrival")
+  local walks = rawget(_G, "bwu")._state.walks
+  assert_(#walks == 1, "one executor walk issued")
+  assert_(walks[1].x == 3165 and walks[1].y == 3486 and walks[1].plane == 0, "goal threads through")
+  assert_(walks[1].radius == 3, "radius threads through")
+  assert_(g:self().tile:equals({ x = 3165, y = 3486, plane = 0 }), "player ends at the goal")
+end
+
+T["walk: non-arrival returns (false, err); cancel reaches the surface"] = function(assert_)
+  _G.bwu = fake_bwu.new({ walk_arrives = false })
+  local g = bot.Game.attach()
+  local arrived, err = g:walk(3165, 3486, 0, 1)
+  assert_(arrived == false, "walk reports non-arrival")
+  assert_(err ~= nil, "an error message is returned")
+  g:walk_cancel()
+  assert_(rawget(_G, "bwu")._state.walk_cancelled == true, "walk_cancel reached the surface")
+end
+
 T["script stops on negative delay"] = function(assert_)
   _G.bwu = fake_bwu.new()
   local loops = 0

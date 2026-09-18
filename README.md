@@ -53,10 +53,25 @@ gives you `sleep_ticks`, not a millisecond timer, on purpose.
 | Module | What it gives you |
 |---|---|
 | `botwithus` | umbrella: `run`, `npcs`, `Game`, `Tile`, `Actions` |
-| `botwithus.game` | `Game.attach()`, `:self()`, `:npcs()`, `:clocks()`, `:walk_to()`, `:path()` |
+| `botwithus.game` | `Game.attach()`, `:self()`, `:npcs()`, `:clocks()`, `:walk_to()` (one hop), `:path()` (query), `:walk()` (full pathed walk that executes transitions), `:walk_cancel()` |
 | `botwithus.entities` | fluent queries: `:of_type()`, `:within()`, `:where()`, `:nearest()`, `:all()` |
 | `botwithus.tile` | `Tile` with Chebyshev (8-directional) distance |
 | `botwithus.actions` | action ids + builders (`walk_to`, `component_click`, …) |
+
+## Walking: two styles
+
+- `ctx.game:walk_to(x, y)` — queue **one** WALK hop. You write the per-tick loop (plan with
+  `:path()`, step, repeat). Non-blocking; paces with `ctx:sleep_ticks`.
+- `ctx.game:walk(x, y, plane, radius)` — a **full pathed walk** through the native executor:
+  it plans, walks, re-plans, and **executes transitions** (doors, stairs, teleports, dialogue)
+  until it arrives. **Blocks** for the whole route and returns `(arrived, err)`;
+  `:walk_cancel()` stops it. See `examples/banker.lua`.
+
+## Run an example
+
+```powershell
+scripts\run_example.ps1 examples\banker.lua   # needs bwu_host on PATH (or $env:BWU_HOST) + a live client
+```
 
 ## Tests
 
