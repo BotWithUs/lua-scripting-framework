@@ -22,6 +22,11 @@ M.NORTH_RAW = 8192
 M.UNKNOWN_RAW  = -1       -- raw value for a facing that is not known
 M.WIRE_UNKNOWN = 0xFFFF   -- what the producer publishes for "not known" (all-ones u16)
 
+-- How far, in raw units, a facing read back from the client may sit from the angle that set
+-- it: the client's conversion truncates, so angle j can read back as j - 1. Compare facings
+-- with is_same_facing(), never ==.
+M.READBACK_TOLERANCE = 1
+
 local DEGREES_PER_TURN = 360
 local SECTOR_DEGREES   = 45
 
@@ -75,6 +80,16 @@ function M.wire_decoder(report)
 end
 
 function M.is_known(raw) return raw ~= M.UNKNOWN_RAW end
+
+-- True when both facings are known and within READBACK_TOLERANCE of each other around the
+-- circle (0 and 16383 are one unit apart). Use this, not ==. Unknown matches nothing.
+function M.is_same_facing(a, b)
+  if not (M.is_known(a) and M.is_known(b)) then return false end
+  check(a)
+  check(b)
+  local apart = (a - b) % M.FULL_TURN
+  return math.min(apart, M.FULL_TURN - apart) <= M.READBACK_TOLERANCE
+end
 
 -- Compass bearing in [0, 360), clockwise from north; nil when unknown.
 function M.degrees(raw)

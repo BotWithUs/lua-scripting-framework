@@ -16,7 +16,7 @@ end
 
 T["protocol version comes from the surface"] = function(assert_)
   _G.bwu = fake_bwu.new()
-  assert_(bot.protocol_version() == 20, "surface reports v20")
+  assert_(bot.protocol_version() == 21, "surface reports v21")
 end
 
 T["game facade decodes self into a Tile"] = function(assert_)
@@ -159,6 +159,33 @@ T["script stops on negative delay"] = function(assert_)
     on_loop = function() loops = loops + 1; return loops >= 2 and -1 or 1 end,
   }, { max_iters = 100 })
   assert_(loops == 2, "returning -1 stopped the loop at 2")
+end
+
+T["facing: npc rows carry orientation, compass point and degrees"] = function(assert_)
+  _G.bwu = fake_bwu.new()
+  local g = bot.Game.attach()
+  local npcs = g:npcs()
+  assert_(npcs[1].orientation == 12288 and npcs[1].facing == "EAST", "raw 12288 faces east")
+  assert_(npcs[1].facing_degrees == 90, "east is 90 degrees")
+  assert_(npcs[2].orientation == -1, "unknown stays -1")
+  assert_(npcs[2].facing == nil and npcs[2].facing_degrees == nil, "unknown has no point, no bearing")
+end
+
+T["facing: a read-back one unit short is the same facing"] = function(assert_)
+  _G.bwu = fake_bwu.new()
+  local g = bot.Game.attach()
+  local npc = g:npcs()[3]
+  assert_(npc.orientation == 8191, "fixture reads back one short of north")
+  assert_(require("botwithus.orientation").is_same_facing(npc.orientation, 8192), "same facing as north")
+  assert_(npc.facing == "NORTH", "and it buckets to north")
+end
+
+T["facing: self and players carry it too"] = function(assert_)
+  _G.bwu = fake_bwu.new()
+  local g = bot.Game.attach()
+  assert_(g:self().facing == "WEST", "self faces west")
+  local p = bot.players(g):where(function(e) return e.server_index == 1001 end):first()
+  assert_(p.facing == "SOUTH" and p.facing_degrees == 180, "raw 0 is south, 180 degrees")
 end
 
 return T

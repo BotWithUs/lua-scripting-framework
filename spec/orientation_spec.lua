@@ -71,4 +71,11 @@ T["wire decoder reports only the first out-of-contract value"] = function(assert
   assert_(#reported == 1 and reported[1] == 0xFFFE, "only the first is reported")
 end
 
+T["is_same_facing allows one unit of read-back"] = function(assert_)
+  assert_(O.is_same_facing(O.NORTH_RAW - O.READBACK_TOLERANCE, O.NORTH_RAW), "one short matches")
+  assert_(O.is_same_facing(O.FULL_TURN - 1, 0), "wraps around the turn")
+  assert_(not O.is_same_facing(O.NORTH_RAW - 2, O.NORTH_RAW), "two apart does not match")
+  assert_(not O.is_same_facing(O.UNKNOWN_RAW, O.UNKNOWN_RAW), "unknown matches nothing")
+end
+
 return T

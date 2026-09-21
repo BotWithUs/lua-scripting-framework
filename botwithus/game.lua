@@ -7,6 +7,7 @@
 
 local Tile    = require("botwithus.tile")
 local Actions = require("botwithus.actions")
+local Orientation = require("botwithus.orientation")
 
 -- Resolve the surface each call. `_G.bwu` is set by the host (or a test fake).
 local function surface()
@@ -45,21 +46,33 @@ function Game:refresh() return surface().refresh(self._host) end
 function Game:clocks() return surface().clocks(self._host) end
 function Game:server_tick() return self:clocks().server_tick end
 
+-- Facing (wire v21). The native surface hands over `orientation`: the raw client angle
+-- 0..16383, or -1 when unknown (it has already turned any out-of-contract wire value into -1
+-- and logged it once). Each row also gets `facing`, the nearest compass point name, and
+-- `facing_degrees`, clockwise from north -- both nil when unknown. Compare two facings with
+-- orientation.is_same_facing, never ==: the client can read an angle back one unit short.
+local function with_facing(row)
+  row.tile = Tile.from(row.tile)
+  local raw = row.orientation or Orientation.UNKNOWN_RAW
+  row.orientation = raw
+  row.facing = Orientation.compass(raw)
+  row.facing_degrees = Orientation.degrees(raw)
+  return row
+end
+
 function Game:self()
-  local s = surface().self(self._host)
-  s.tile = Tile.from(s.tile)
-  return s
+  return with_facing(surface().self(self._host))
 end
 
 function Game:npcs()
   local raw = surface().npcs(self._host)
-  for _, n in ipairs(raw) do n.tile = Tile.from(n.tile) end
+  for _, n in ipairs(raw) do with_facing(n) end
   return raw
 end
 
 function Game:players()
   local raw = surface().players(self._host)
-  for _, p in ipairs(raw) do p.tile = Tile.from(p.tile) end
+  for _, p in ipairs(raw) do with_facing(p) end
   return raw
 end
 
