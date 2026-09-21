@@ -14,15 +14,21 @@ function M.new(opts)
     tick   = opts.tick or 1000,
     seq    = 5000000,
     self_  = opts.self_ or { valid = true, tile = { x = 3200, y = 3200, plane = 0 },
-                             server_index = 1000, combat_level = 126, health = 990, max_health = 990 },
+                             server_index = 1000, combat_level = 126, health = 990, max_health = 990,
+                             orientation = 4096 },
     npcs_  = opts.npcs_ or {
-      { server_index = 55, type_id = 1234, tile = { x = 3201, y = 3201, plane = 0 }, health_ratio = 255 },
-      { server_index = 56, type_id = 1234, tile = { x = 3205, y = 3205, plane = 0 }, health_ratio = 128 },
-      { server_index = 57, type_id = 9999, tile = { x = 3202, y = 3200, plane = 0 }, health_ratio = -1 },
+      { server_index = 55, type_id = 1234, tile = { x = 3201, y = 3201, plane = 0 }, health_ratio = 255,
+        orientation = 12288 },
+      { server_index = 56, type_id = 1234, tile = { x = 3205, y = 3205, plane = 0 }, health_ratio = 128,
+        orientation = -1 },
+      { server_index = 57, type_id = 9999, tile = { x = 3202, y = 3200, plane = 0 }, health_ratio = -1,
+        orientation = 8191 },
     },
     players_ = opts.players_ or {
-      { server_index = 1000, tile = { x = 3200, y = 3200, plane = 0 }, animation_id = -1, combat_level = 126 },
-      { server_index = 1001, tile = { x = 3210, y = 3200, plane = 0 }, animation_id = 808, combat_level = 90 },
+      { server_index = 1000, tile = { x = 3200, y = 3200, plane = 0 }, animation_id = -1, combat_level = 126,
+        orientation = 4096 },
+      { server_index = 1001, tile = { x = 3210, y = 3200, plane = 0 }, animation_id = 808, combat_level = 90,
+        orientation = 0 },
     },
     -- flags: 0x1 hidden, 0x2 combined section, 0x4 deleted (BWU_LOC_FLAG_*)
     locs_  = opts.locs_ or {
@@ -37,7 +43,7 @@ function M.new(opts)
     walk_arrives = (opts.walk_arrives ~= false),  -- what walk() returns
     walk_cancelled = false,
   }
-  local bwu = { PROTOCOL_VERSION = 20, _state = state }
+  local bwu = { PROTOCOL_VERSION = 21, ABI_VERSION = 2, _state = state }
 
   function bwu.discover_pids() return state.pids end
   function bwu.attach(pid) return { pid = pid } end
@@ -48,14 +54,14 @@ function M.new(opts)
     local s = state.self_
     return { valid = s.valid, tile = { x = s.tile.x, y = s.tile.y, plane = s.tile.plane },
              server_index = s.server_index, combat_level = s.combat_level,
-             health = s.health, max_health = s.max_health }
+             health = s.health, max_health = s.max_health, orientation = s.orientation }
   end
   function bwu.npcs(_)
     local out = {}
     for i, n in ipairs(state.npcs_) do
       out[i] = { server_index = n.server_index, type_id = n.type_id,
                  tile = { x = n.tile.x, y = n.tile.y, plane = n.tile.plane },
-                 health_ratio = n.health_ratio }
+                 health_ratio = n.health_ratio, orientation = n.orientation }
     end
     return out
   end
@@ -64,7 +70,8 @@ function M.new(opts)
     local out = {}
     for i, p in ipairs(state.players_) do
       out[i] = { server_index = p.server_index, tile = copy_tile(p.tile),
-                 animation_id = p.animation_id, combat_level = p.combat_level }
+                 animation_id = p.animation_id, combat_level = p.combat_level,
+                 orientation = p.orientation }
     end
     return out
   end
