@@ -16,7 +16,7 @@ end
 
 T["protocol version comes from the surface"] = function(assert_)
   _G.bwu = fake_bwu.new()
-  assert_(bot.protocol_version() == 19, "surface reports v19")
+  assert_(bot.protocol_version() == 20, "surface reports v20")
 end
 
 T["game facade decodes self into a Tile"] = function(assert_)

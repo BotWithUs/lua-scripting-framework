@@ -25,7 +25,7 @@ function M.new(opts)
     walk_arrives = (opts.walk_arrives ~= false),  -- what walk() returns
     walk_cancelled = false,
   }
-  local bwu = { PROTOCOL_VERSION = 19, _state = state }
+  local bwu = { PROTOCOL_VERSION = 20, _state = state }
 
   function bwu.discover_pids() return state.pids end
   function bwu.attach(pid) return { pid = pid } end
