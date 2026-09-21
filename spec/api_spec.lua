@@ -90,6 +90,9 @@ T["players: query + nearest"] = function(assert_)
   local p = bot.players(g):where(function(e) return e.server_index == 1001 end):first()
   assert_(p.combat_level == 90 and p.animation_id == 808, "player fields pass through")
   assert_(p.tile.x == 3210, "tile is a Tile")
+  local nearest, d = bot.players(g):nearest({ x = 3209, y = 3200, plane = 0 })
+  assert_(nearest.server_index == 1001, "nearest to (3209,3200) is #1001, not #1000")
+  assert_(d == 1, "one step away")
 end
 
 T["walk_to queues a WALK (id 23, p1 1)"] = function(assert_)
