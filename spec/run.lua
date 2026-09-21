@@ -5,8 +5,24 @@
 -- passing an assert_(cond, msg) into every test. Exit code 1 on any failure.
 
 -- Make `require("botwithus...")` and `require("spec...")` resolve from the repo root.
-local here = arg[0]:gsub("[^/\\]*$", "")            -- .../spec/
-local root = here:gsub("[/\\]spec[/\\]?$", "") .. "/" -- repo root
+--
+-- The runner finds itself through its own chunk name rather than the global `arg`: an
+-- embedding host (bwu_host.exe --lua) runs the file with no `arg` at all, but every host
+-- that loads a file names the chunk "@<path as given>". From that path, drop the file name
+-- and then the `spec` directory. Both steps accept a bare relative path ("spec/run.lua"),
+-- where the old pattern required a separator before `spec` and so resolved the root to
+-- "spec//" -- which is why `lua spec/run.lua`, the documented usage, could not find
+-- `botwithus`.
+local function repo_root()
+  local source = debug.getinfo(1, "S").source
+  local path = source:sub(1, 1) == "@" and source:sub(2) or "spec/run.lua"
+  local spec_dir = path:match("^(.*)[/\\][^/\\]*$")          -- ".../spec", "spec" or nil
+  if spec_dir == nil then return "../" end                    -- run from inside spec/
+  local root = spec_dir:match("^(.*)[/\\][^/\\]*$")          -- "..." or nil
+  return (root or ".") .. "/"
+end
+
+local root = repo_root()
 package.path = root .. "?.lua;" .. root .. "?/init.lua;" .. package.path
 
 local specs = { "spec.api_spec" }
