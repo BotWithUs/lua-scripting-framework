@@ -1,0 +1,53 @@
+-- Pins the facing convention. The four cardinal rows are the contract: raw grows clockwise
+-- seen from above, 0 is south and 8192 is north. If a live check moves the zero offset,
+-- NORTH_RAW changes and these rows say what must follow.
+local O = require("botwithus.orientation")
+
+local T = {}
+
+local function near(a, b) return math.abs(a - b) < 1e-9 end
+
+T["cardinals map to bearing and compass point"] = function(assert_)
+  local rows = {
+    { 8192, 0, "NORTH" }, { 12288, 90, "EAST" }, { 0, 180, "SOUTH" }, { 4096, 270, "WEST" },
+  }
+  for _, r in ipairs(rows) do
+    assert_(near(O.degrees(r[1]), r[2]), ("raw %d -> %s degrees"):format(r[1], r[2]))
+    assert_(O.compass(r[1]) == r[3], ("raw %d -> %s"):format(r[1], r[3]))
+  end
+end
+
+T["intercardinals map to their point"] = function(assert_)
+  local rows = {
+    { 10240, "NORTH_EAST" }, { 14336, "SOUTH_EAST" }, { 2048, "SOUTH_WEST" }, { 6144, "NORTH_WEST" },
+  }
+  for _, r in ipairs(rows) do
+    assert_(O.compass(r[1]) == r[2], ("raw %d -> %s"):format(r[1], r[2]))
+  end
+end
+
+T["just short of north wraps to north"] = function(assert_)
+  local raw = O.NORTH_RAW - 1
+  assert_(O.degrees(raw) > 315, "bearing is past north-west")
+  assert_(O.compass(raw) == "NORTH", "and rounds to north, not off the end")
+end
+
+T["wire sentinel is unknown with no bearing and no point"] = function(assert_)
+  local raw = O.from_wire(O.WIRE_UNKNOWN)
+  assert_(raw == O.UNKNOWN_RAW, "0xFFFF decodes to UNKNOWN_RAW")
+  assert_(not O.is_known(raw), "not known")
+  assert_(O.degrees(raw) == nil, "no bearing")
+  assert_(O.compass(raw) == nil, "no point")
+end
+
+T["wire angle decodes to itself"] = function(assert_)
+  assert_(O.from_wire(O.NORTH_RAW) == O.NORTH_RAW, "an angle is passed through")
+end
+
+T["out-of-contract value is refused, not wrapped"] = function(assert_)
+  for _, bad in ipairs({ O.FULL_TURN, 0xFFFE, -2 }) do
+    assert_(not pcall(O.from_wire, bad), ("%d must raise"):format(bad))
+  end
+end
+
+return T
