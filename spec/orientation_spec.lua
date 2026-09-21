@@ -32,8 +32,10 @@ T["just short of north wraps to north"] = function(assert_)
   assert_(O.compass(raw) == "NORTH", "and rounds to north, not off the end")
 end
 
+local function fail_on_report(v) error("an in-contract wire value was reported: " .. tostring(v)) end
+
 T["wire sentinel is unknown with no bearing and no point"] = function(assert_)
-  local raw = O.from_wire(O.WIRE_UNKNOWN)
+  local raw = O.from_wire(O.WIRE_UNKNOWN, fail_on_report)
   assert_(raw == O.UNKNOWN_RAW, "0xFFFF decodes to UNKNOWN_RAW")
   assert_(not O.is_known(raw), "not known")
   assert_(O.degrees(raw) == nil, "no bearing")
@@ -41,13 +43,32 @@ T["wire sentinel is unknown with no bearing and no point"] = function(assert_)
 end
 
 T["wire angle decodes to itself"] = function(assert_)
-  assert_(O.from_wire(O.NORTH_RAW) == O.NORTH_RAW, "an angle is passed through")
+  assert_(O.from_wire(O.NORTH_RAW, fail_on_report) == O.NORTH_RAW, "an angle is passed through")
 end
 
-T["out-of-contract value is refused, not wrapped"] = function(assert_)
+T["from_wire degrades an out-of-contract value to unknown and reports it"] = function(assert_)
   for _, bad in ipairs({ O.FULL_TURN, 0xFFFE, -2 }) do
-    assert_(not pcall(O.from_wire, bad), ("%d must raise"):format(bad))
+    local reported = {}
+    local ok, raw = pcall(O.from_wire, bad, function(v) reported[#reported + 1] = v end)
+    assert_(ok, ("%d must not raise at the wire"):format(bad))
+    assert_(raw == O.UNKNOWN_RAW, ("%d decodes as unknown"):format(bad))
+    assert_(#reported == 1 and reported[1] == bad, ("%d is reported"):format(bad))
   end
+end
+
+T["the api raises for an out-of-range raw"] = function(assert_)
+  for _, bad in ipairs({ O.FULL_TURN, 0xFFFE, -2 }) do
+    assert_(not pcall(O.degrees, bad), ("degrees(%d) must raise"):format(bad))
+  end
+end
+
+T["wire decoder reports only the first out-of-contract value"] = function(assert_)
+  local reported = {}
+  local decode = O.wire_decoder(function(v) reported[#reported + 1] = v end)
+  for _ = 1, 50 do assert_(decode(0xFFFE) == O.UNKNOWN_RAW, "unknown") end
+  assert_(decode(O.FULL_TURN) == O.UNKNOWN_RAW, "a second bad value is unknown too")
+  assert_(decode(O.NORTH_RAW) == O.NORTH_RAW, "a good value still decodes")
+  assert_(#reported == 1 and reported[1] == 0xFFFE, "only the first is reported")
 end
 
 return T
