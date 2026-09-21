@@ -57,6 +57,39 @@ function Game:npcs()
   return raw
 end
 
+function Game:players()
+  local raw = surface().players(self._host)
+  for _, p in ipairs(raw) do p.tile = Tile.from(p.tile) end
+  return raw
+end
+
+-- Location flag bits, mirroring BWU_LOC_FLAG_* on the native surface.
+Game.LOC_FLAG_HIDDEN           = 0x1
+Game.LOC_FLAG_COMBINED_SECTION = 0x2
+Game.LOC_FLAG_DELETED          = 0x4
+
+local function has_flag(flags, bit) return math.floor(flags / bit) % 2 == 1 end
+
+-- Scene objects (scenery) that are on screen: hidden and deleted rows are dropped, the
+-- same visibility rule the Java host's SceneObjects uses. Each row carries:
+--   id / type_id  the loc id the server sent -- identity, hardcoded id sets, interaction
+--   resolved_id   the morph-resolved id to look a name or options up by (== id if no morph)
+--   shape         scenery shape code (wall, decoration, centrepiece...)
+--   rotation      0..3 quarter turns of the loc's model. Relative to the model's own
+--                 default pose, so it is NOT a compass heading.
+-- type_id is an alias of id so the shared query's :of_type() works on objects too.
+function Game:objects()
+  local out = {}
+  for _, o in ipairs(surface().locations(self._host)) do
+    if not has_flag(o.flags, Game.LOC_FLAG_HIDDEN) and not has_flag(o.flags, Game.LOC_FLAG_DELETED) then
+      o.tile = Tile.from(o.tile)
+      o.type_id = o.id
+      out[#out + 1] = o
+    end
+  end
+  return out
+end
+
 -- Queue any action built by botwithus.actions (or a raw {id,p1,p2,p3}).
 function Game:do_action(a)
   return surface().queue_action(self._host, a.id, a.p1 or 0, a.p2 or 0, a.p3 or 0)
