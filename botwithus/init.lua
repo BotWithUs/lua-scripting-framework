@@ -18,8 +18,10 @@ M.Entities = require("botwithus.entities")
 local Script = require("botwithus.script")
 M.run = Script.run
 
--- Sugar: bot.npcs(game) -> a fluent query.
-M.npcs = M.Entities.npcs
+-- Sugar: bot.npcs(game) / bot.players(game) / bot.objects(game) -> a fluent query.
+M.npcs    = M.Entities.npcs
+M.players = M.Entities.players
+M.objects = M.Entities.objects
 
 -- The protocol version the native surface speaks (nil if the surface isn't present).
 function M.protocol_version()

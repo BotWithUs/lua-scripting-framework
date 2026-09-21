@@ -56,6 +56,42 @@ T["npc query: within radius is immutable-chainable"] = function(assert_)
   assert_(close:count() == 1, "only #55 is within radius 2")
 end
 
+T["objects: hidden and deleted rows are dropped"] = function(assert_)
+  _G.bwu = fake_bwu.new()
+  local g = bot.Game.attach()
+  -- five rows on the surface, one hidden (0x1) and one deleted (0x4)
+  assert_(bot.objects(g):count() == 3, "three visible objects")
+  assert_(bot.objects(g):of_type(1276):count() == 1, "only the visible 1276 remains")
+end
+
+T["objects: shape and rotation reach the script"] = function(assert_)
+  _G.bwu = fake_bwu.new()
+  local g = bot.Game.attach()
+  local door = bot.objects(g):of_type(1530):first()
+  assert_(door.shape == 0, "wall shape passes through")
+  assert_(door.rotation == 3, "rotation passes through")
+  local tree = bot.objects(g):of_type(1276):first()
+  assert_(tree.shape == 10 and tree.rotation == 1, "each row keeps its own shape/rotation")
+end
+
+T["objects: a morph loc keeps its base id and carries the resolved one"] = function(assert_)
+  _G.bwu = fake_bwu.new()
+  local g = bot.Game.attach()
+  local range = bot.objects(g):of_type(125195):first()
+  assert_(range ~= nil, "found by the base id the server sent")
+  assert_(range.resolved_id == 125205, "resolved id rides alongside")
+  assert_(bot.objects(g):of_type(125205):count() == 0, "of_type matches the base id only")
+end
+
+T["players: query + nearest"] = function(assert_)
+  _G.bwu = fake_bwu.new()
+  local g = bot.Game.attach()
+  assert_(bot.players(g):count() == 2, "two players")
+  local p = bot.players(g):where(function(e) return e.server_index == 1001 end):first()
+  assert_(p.combat_level == 90 and p.animation_id == 808, "player fields pass through")
+  assert_(p.tile.x == 3210, "tile is a Tile")
+end
+
 T["walk_to queues a WALK (id 23, p1 1)"] = function(assert_)
   _G.bwu = fake_bwu.new()
   local g = bot.Game.attach()

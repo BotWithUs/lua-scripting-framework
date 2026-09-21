@@ -68,5 +68,15 @@ function Entities.npcs(game)
   return new_query(function() return game:npcs() end)
 end
 
+-- Players over a Game facade.
+function Entities.players(game)
+  return new_query(function() return game:players() end)
+end
+
+-- Visible scene objects over a Game facade; :of_type() matches the loc id the server sent.
+function Entities.objects(game)
+  return new_query(function() return game:objects() end)
+end
+
 Entities.Query = Query
 return Entities

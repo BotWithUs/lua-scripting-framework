@@ -20,6 +20,18 @@ function M.new(opts)
       { server_index = 56, type_id = 1234, tile = { x = 3205, y = 3205, plane = 0 }, health_ratio = 128 },
       { server_index = 57, type_id = 9999, tile = { x = 3202, y = 3200, plane = 0 }, health_ratio = -1 },
     },
+    players_ = opts.players_ or {
+      { server_index = 1000, tile = { x = 3200, y = 3200, plane = 0 }, animation_id = -1, combat_level = 126 },
+      { server_index = 1001, tile = { x = 3210, y = 3200, plane = 0 }, animation_id = 808, combat_level = 90 },
+    },
+    -- flags: 0x1 hidden, 0x2 combined section, 0x4 deleted (BWU_LOC_FLAG_*)
+    locs_  = opts.locs_ or {
+      { id = 1276, resolved_id = 1276, tile = { x = 3203, y = 3200, plane = 0 }, shape = 10, rotation = 1, flags = 0 },
+      { id = 1530, resolved_id = 1530, tile = { x = 3201, y = 3200, plane = 0 }, shape = 0,  rotation = 3, flags = 0 },
+      { id = 1276, resolved_id = 1276, tile = { x = 3199, y = 3200, plane = 0 }, shape = 10, rotation = 0, flags = 0x1 },
+      { id = 1276, resolved_id = 1276, tile = { x = 3198, y = 3200, plane = 0 }, shape = 10, rotation = 0, flags = 0x4 },
+      { id = 125195, resolved_id = 125205, tile = { x = 3210, y = 3210, plane = 0 }, shape = 10, rotation = 2, flags = 0x2 },
+    },
     actions = {},   -- recorded queue_action calls
     walks   = {},   -- recorded walk() calls (executor)
     walk_arrives = (opts.walk_arrives ~= false),  -- what walk() returns
@@ -44,6 +56,23 @@ function M.new(opts)
       out[i] = { server_index = n.server_index, type_id = n.type_id,
                  tile = { x = n.tile.x, y = n.tile.y, plane = n.tile.plane },
                  health_ratio = n.health_ratio }
+    end
+    return out
+  end
+  local function copy_tile(t) return { x = t.x, y = t.y, plane = t.plane } end
+  function bwu.players(_)
+    local out = {}
+    for i, p in ipairs(state.players_) do
+      out[i] = { server_index = p.server_index, tile = copy_tile(p.tile),
+                 animation_id = p.animation_id, combat_level = p.combat_level }
+    end
+    return out
+  end
+  function bwu.locations(_)
+    local out = {}
+    for i, o in ipairs(state.locs_) do
+      out[i] = { id = o.id, resolved_id = o.resolved_id, tile = copy_tile(o.tile),
+                 shape = o.shape, rotation = o.rotation, flags = o.flags }
     end
     return out
   end
