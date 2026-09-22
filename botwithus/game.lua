@@ -8,6 +8,7 @@
 local Tile    = require("botwithus.tile")
 local Actions = require("botwithus.actions")
 local Orientation = require("botwithus.orientation")
+local Variables = require("botwithus.variables")
 
 -- Resolve the surface each call. `_G.bwu` is set by the host (or a test fake).
 local function surface()
@@ -134,5 +135,40 @@ end
 function Game:walk_cancel()
   return surface().walk_cancel(self._host)
 end
+
+-- Varps and varbits (see botwithus.variables for what each state means). Decide on `state`,
+-- never on `value`: a set varp can hold -1, and so can a varp at its default. A failed read
+-- raises; an unreadable varp is a read whose state is "unavailable".
+
+-- {id, state, value, value64, kind, default_verified, is_set, has_value}
+function Game:read_varp(id) return Variables.read_varps(surface(), self._host, { id })[1] end
+function Game:read_varps(ids) return Variables.read_varps(surface(), self._host, ids) end
+
+-- {id, state, value, default_verified, is_set, has_value}
+function Game:read_varbit(id) return Variables.read_varbits(surface(), self._host, { id })[1] end
+function Game:read_varbits(ids) return Variables.read_varbits(surface(), self._host, ids) end
+
+-- Just the state string.
+function Game:varp_state(id) return self:read_varp(id).state end
+
+-- The value the game reads: the stored value, the default when the client holds none, or -1
+-- for no such varp / a failed read (-1 is also a legal stored value). A LONG varp's low 32 bits.
+function Game:varp(id) return self:read_varp(id).value end
+
+-- Like :varp, at full width: all 64 bits of a LONG varp.
+function Game:varp_long(id) return self:read_varp(id).value64 end
+
+-- :varp for each id, in order.
+function Game:varps(ids)
+  local out = {}
+  for i, r in ipairs(self:read_varps(ids)) do out[i] = r.value end
+  return out
+end
+
+-- The varbit's value as the game reads it, or -1 when it has none.
+function Game:varbit(id) return self:read_varbit(id).value end
+
+-- 1 once varp defaults come from the cache, 0 while it warms up after attach, -1 never.
+function Game:varp_defaults_status() return Variables.defaults_status(surface()) end
 
 return Game
