@@ -14,6 +14,7 @@ M.Tile     = require("botwithus.tile")
 M.Actions  = require("botwithus.actions")
 M.Game     = require("botwithus.game")
 M.Entities = require("botwithus.entities")
+M.Variables = require("botwithus.variables")
 
 local Script = require("botwithus.script")
 M.run = Script.run

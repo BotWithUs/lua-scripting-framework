@@ -52,8 +52,9 @@ gives you `sleep_ticks`, not a millisecond timer, on purpose.
 
 | Module | What it gives you |
 |---|---|
-| `botwithus` | umbrella: `run`, `npcs`, `players`, `objects`, `Game`, `Tile`, `Actions` |
-| `botwithus.game` | `Game.attach()`, `:self()`, `:npcs()`, `:players()`, `:objects()` (visible scenery with `shape` / `rotation` / `resolved_id`), `:clocks()`, `:walk_to()` (one hop), `:path()` (query), `:walk()` (full pathed walk that executes transitions), `:walk_cancel()` |
+| `botwithus` | umbrella: `run`, `npcs`, `players`, `objects`, `Game`, `Tile`, `Actions`, `Variables` |
+| `botwithus.game` | `Game.attach()`, `:self()`, `:npcs()`, `:players()`, `:objects()` (visible scenery with `shape` / `rotation` / `resolved_id`), `:clocks()`, `:walk_to()` (one hop), `:path()` (query), `:walk()` (full pathed walk that executes transitions), `:walk_cancel()`, `:read_varp(s)` / `:read_varbit(s)` / `:varp_state()` / `:varp()` / `:varp_long()` / `:varbit()` |
+| `botwithus.variables` | the varp state names (`SET`, `DEFAULT`, `NO_SUCH_VARP`, `UNAVAILABLE`) |
 | `botwithus.entities` | fluent queries: `:of_type()`, `:within()`, `:where()`, `:nearest()`, `:all()` |
 | `botwithus.tile` | `Tile` with Chebyshev (8-directional) distance |
 | `botwithus.actions` | action ids + builders (`walk_to`, `component_click`, …) |
@@ -66,6 +67,30 @@ gives you `sleep_ticks`, not a millisecond timer, on purpose.
   it plans, walks, re-plans, and **executes transitions** (doors, stairs, teleports, dialogue)
   until it arrives. **Blocks** for the whole route and returns `(arrived, err)`;
   `:walk_cancel()` stops it. See `examples/banker.lua`.
+
+## Varps and varbits: decide on the state, not the value
+
+Varps are set lazily by the server, so most have no client-side entry at all, and a value
+alone can't tell you whether one is set: a set varp can hold `-1`, and so can a varp at its
+default. Every read carries a `state` string:
+
+```lua
+local V = require("botwithus.variables")
+local r = ctx.game:read_varp(3)          -- or :read_varps / :read_varbit / :read_varbits
+if r.state == V.SET then ...             -- "set": r.value is the stored value
+elseif r.state == V.DEFAULT then ...     -- "default_not_set_clientside": the default the game reads
+elseif r.state == V.NO_SUCH_VARP then ...
+else ... end                             -- "unavailable": lobby, entering the world, bad id, timeout
+```
+
+- `:varp(id)` / `:varps(ids)` / `:varbit(id)` return what the game reads: the stored value, the
+  default when unset, or `-1` for no value. `:varp_long(id)` gives all 64 bits of a LONG varp,
+  whose `value` is only the low 32.
+- Defaults come from the game cache through the native host. If it can't confirm one (an older
+  `NXTCache.dll`, or the cache still warming up just after attach), the read is still
+  `"default_not_set_clientside"` with `value` `0` and `default_verified` false.
+- A varbit takes its base variable's state and decodes the base's value, so a varbit over an
+  unset base reads the base's default bits, exactly as the game does.
 
 ## Run an example
 

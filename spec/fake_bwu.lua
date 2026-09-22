@@ -42,8 +42,16 @@ function M.new(opts)
     walks   = {},   -- recorded walk() calls (executor)
     walk_arrives = (opts.walk_arrives ~= false),  -- what walk() returns
     walk_cancelled = false,
+    -- var_reads(fn_name, ids) -> list of records, or (nil, err) for a failed read
+    var_reads = opts.var_reads or function(_, _) return {} end,
+    var_calls = {},
+    defaults_status = opts.defaults_status or 1,
   }
-  local bwu = { PROTOCOL_VERSION = 21, ABI_VERSION = 2, _state = state }
+  local bwu = { PROTOCOL_VERSION = 21, ABI_VERSION = 2, _state = state,
+                -- BWU_VARP_* / BWU_VAR_KIND_* as native-scripting-host exports them
+                VARP_UNAVAILABLE = 0, VARP_DEFAULT_NOT_SET_CLIENTSIDE = 1, VARP_SET = 2,
+                VARP_NO_SUCH_VARP = 3, VAR_KIND_UNKNOWN = -1, VAR_KIND_INT = 0, VAR_KIND_LONG = 1,
+                VAR_KIND_STRING = 2, VAR_NO_VALUE = -1 }
 
   function bwu.discover_pids() return state.pids end
   function bwu.attach(pid) return { pid = pid } end
@@ -97,6 +105,15 @@ function M.new(opts)
     return false, "did not arrive"
   end
   function bwu.walk_cancel(_) state.walk_cancelled = true end
+  local function var_read(fn)
+    return function(_, ids)
+      state.var_calls[#state.var_calls + 1] = { fn = fn, ids = ids }
+      return state.var_reads(fn, ids)
+    end
+  end
+  bwu.read_varps = var_read("read_varps")
+  bwu.read_varbits = var_read("read_varbits")
+  function bwu.varp_defaults_status() return state.defaults_status end
   function bwu.path(_, x, y, plane)
     -- straight-line steps from self toward (x,y), matching the native stub's shape
     local sx, sy = state.self_.tile.x, state.self_.tile.y
@@ -110,6 +127,15 @@ function M.new(opts)
   end
 
   return bwu
+end
+
+-- One record in the shape bwu.read_varps / read_varbits returns.
+function M.var_record(id, state, value, opts)
+  opts = opts or {}
+  local verified = opts.verified
+  if verified == nil then verified = true end
+  return { id = id, state = state, value = value, value64 = opts.value64 or value,
+           kind = opts.kind or -1, default_verified = verified }
 end
 
 return M

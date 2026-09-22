@@ -35,3 +35,8 @@ in the native host, and this layer is safe to open-source because it is just idi
 The action ids and surface field names in `botwithus.actions` / `botwithus.game` mirror the
 native host's `include/bwu_host_surface.h`. If that surface changes, update these to match;
 `spec/fake_bwu.lua` is the shape contract the tests pin.
+
+Varp state numbers are the exception: `botwithus.variables` maps them through the surface's own
+`bwu.VARP_*` / `bwu.VAR_KIND_*` constants **by name**, so a renumbering on the host cannot
+silently misread, and a `bwu` without them is refused with an error naming what is missing.
+The composition (agent state + cache default) lives in the native host, not here.
