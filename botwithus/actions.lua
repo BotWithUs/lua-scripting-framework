@@ -10,6 +10,9 @@ local Actions = {}
 Actions.WALK            = 23
 Actions.COMPONENT_CLICK = 57
 Actions.DIALOGUE_OPTION = 43
+-- Fire a component's CS2 trigger: p1 = (iface << 16) | comp,
+-- p2 = (triggerType << 16) | (sub & 0xFFFF), p3 = the trigger's arg (see botwithus.input for keys).
+Actions.COMPONENT_TRIGGER = 5003
 
 -- Walk to a tile. p1 == 1 is the "minimap/scene walk" selector the agent expects.
 function Actions.walk_to(x, y)
