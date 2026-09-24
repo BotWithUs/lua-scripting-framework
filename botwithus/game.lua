@@ -108,6 +108,27 @@ function Game:do_action(a)
   return surface().queue_action(self._host, a.id, a.p1 or 0, a.p2 or 0, a.p3 or 0)
 end
 
+-- Queue a list of actions in one round trip, in order. Returns how many the agent accepted,
+-- which is fewer than #list only when its queue is full. At most bwu.MAX_ACTION_BATCH.
+function Game:queue_actions(list)
+  local n, err = surface().queue_actions(self._host, list)
+  if not n then error("botwithus: queue_actions failed: " .. tostring(err), 2) end
+  return n
+end
+
+-- Client variables (varcs). An int varc the agent cannot read comes back as -1.
+function Game:varc_int(id)
+  local v, err = surface().varc_int(self._host, id)
+  if v == nil then error("botwithus: varc_int failed: " .. tostring(err), 2) end
+  return v
+end
+
+function Game:varc_string(id)
+  local v, err = surface().varc_string(self._host, id)
+  if v == nil then error("botwithus: varc_string failed: " .. tostring(err), 2) end
+  return v
+end
+
 -- Walk one hop toward a tile (queues a WALK; pathing/stepping is the caller's loop).
 function Game:walk_to(x, y)
   return self:do_action(Actions.walk_to(x, y))

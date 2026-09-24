@@ -39,11 +39,15 @@ function M.new(opts)
       { id = 125195, resolved_id = 125205, tile = { x = 3210, y = 3210, plane = 0 }, shape = 10, rotation = 2, flags = 0x2 },
     },
     actions = {},   -- recorded queue_action calls
+    batches = {},   -- recorded queue_actions calls, one list per call
+    queue_accept = opts.queue_accept,  -- nil: queue_actions takes every action
+    varcs = opts.varcs or {},                -- varc id -> int
+    varc_strings = opts.varc_strings or {},  -- varc id -> string
     walks   = {},   -- recorded walk() calls (executor)
     walk_arrives = (opts.walk_arrives ~= false),  -- what walk() returns
     walk_cancelled = false,
   }
-  local bwu = { PROTOCOL_VERSION = 21, ABI_VERSION = 2, _state = state }
+  local bwu = { PROTOCOL_VERSION = 21, ABI_VERSION = 2, MAX_ACTION_BATCH = 128, _state = state }
 
   function bwu.discover_pids() return state.pids end
   function bwu.attach(pid) return { pid = pid } end
@@ -87,6 +91,20 @@ function M.new(opts)
     state.actions[#state.actions + 1] = { id = id, p1 = p1, p2 = p2, p3 = p3 }
     return true
   end
+  -- Batched queue: records every action in order (into `actions` too) and the batch
+  -- itself. `queue_accept` caps how many the fake agent takes, like a full agent queue.
+  function bwu.queue_actions(_, list)
+    local accepted = math.min(#list, state.queue_accept or #list)
+    local batch = {}
+    for i, a in ipairs(list) do
+      batch[i] = { id = a.id, p1 = a.p1 or 0, p2 = a.p2 or 0, p3 = a.p3 or 0 }
+      if i <= accepted then state.actions[#state.actions + 1] = batch[i] end
+    end
+    state.batches[#state.batches + 1] = batch
+    return accepted
+  end
+  function bwu.varc_int(_, id) return state.varcs[id] or -1 end
+  function bwu.varc_string(_, id) return state.varc_strings[id] or "" end
   function bwu.walk(_, x, y, plane, radius)
     state.walks[#state.walks + 1] = { x = x, y = y, plane = plane, radius = radius }
     -- The real executor moves the player; the fake just lands them on the goal on arrival.
