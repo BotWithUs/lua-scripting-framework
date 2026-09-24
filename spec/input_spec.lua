@@ -184,7 +184,7 @@ end
 -- --- refused, nothing sent ---------------------------------------------------------------
 
 T["bad amounts raise before sending"] = function(assert_)
-  local bad = { "b", "1.5", "1 0", "k", "k5", "5kk", "5k3", "5b", "", "12345678901",
+  local bad = { "b", "1.5", "1 0", "k", "k5", "5kk", "5k3", "5b", "5M", "", "12345678901",
                 -1, 1.5, true, 2147483648, "2147483648", "2147484k", "2148m" }
   for _, amount in ipairs(bad) do
     local d, st = dialog()
@@ -195,7 +195,7 @@ T["bad amounts raise before sending"] = function(assert_)
 end
 
 T["amount edges that are accepted"] = function(assert_)
-  for _, amount in ipairs({ "2147483647", "2147483k", "2147m", "5K", "5M", "0" }) do
+  for _, amount in ipairs({ "2147483647", "2147483k", "2147m", "5K", "0" }) do
     local d, st = dialog()
     assert_(d:enter_amount(amount), "amount " .. amount .. " returns true")
     assert_(same(arg0s(st), with_enter(chars(amount))), "amount " .. amount)

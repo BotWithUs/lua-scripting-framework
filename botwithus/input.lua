@@ -45,7 +45,8 @@ local U16_MAX = 0xFFFF
 local I16_MIN, I16_MAX = -0x8000, 0x7FFF
 local I32_MAX = 0x7FFFFFFF
 local PRINTABLE_FIRST, PRINTABLE_LAST = 0x20, 0x7E
-local AMOUNT_MULTIPLIER = { k = 1000, K = 1000, m = 1000000, M = 1000000 }
+-- Uppercase M is refused until it is live-verified: the dialog is only known to take k, K, m.
+local AMOUNT_MULTIPLIER = { k = 1000, K = 1000, m = 1000000 }
 local MODE_NAMES = { [0] = "closed", [2] = "name", [7] = "amount" }
 
 local function rejected(msg) error("input rejected: " .. msg, 3) end
@@ -142,7 +143,7 @@ function Input.type_text(game, iface, comp, text)
   return Input.fire_keys(game, iface, comp, strokes_of(text))
 end
 
--- The text to type for `amount`: digits, optionally one k/K/m/M suffix, at most 10 chars.
+-- The text to type for `amount`: digits, optionally one k/K/m suffix, at most 10 chars.
 -- An integer is typed as its digits. The value may not exceed 2^31-1: an amount the game
 -- cannot hold is rejected rather than left to overflow.
 function Input.validate_amount(amount)
@@ -150,8 +151,8 @@ function Input.validate_amount(amount)
     rejected("an amount must be an integer or a string, not " .. tostring(amount))
   end
   local text = tostring(amount)
-  local digits, suffix = text:match("^(%d+)([kKmM]?)$")
-  if not digits then rejected("amount '" .. text .. "' must be digits with at most one k/K/m/M suffix") end
+  local digits, suffix = text:match("^(%d+)([kKm]?)$")
+  if not digits then rejected("amount '" .. text .. "' must be digits with at most one k/K/m suffix") end
   if #text > Input.AMOUNT_MAX_LEN then
     rejected("amount '" .. text .. "' is longer than " .. Input.AMOUNT_MAX_LEN .. " characters")
   end
