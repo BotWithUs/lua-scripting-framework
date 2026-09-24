@@ -57,7 +57,7 @@ gives you `sleep_ticks`, not a millisecond timer, on purpose.
 | `botwithus.entities` | fluent queries: `:of_type()`, `:within()`, `:where()`, `:nearest()`, `:all()` |
 | `botwithus.tile` | `Tile` with Chebyshev (8-directional) distance |
 | `botwithus.actions` | action ids + builders (`walk_to`, `component_click`, …) |
-| `botwithus.input` | the game's input dialog: `Input.dialog(game)` with `:mode()`, `:is_open()`, `:text()`, `:enter_amount(3 \| "10k")`, `:enter_text(name)`, `:submit()`, `:cancel()`, `:backspace(n)`, `:clear()`; the low-level `Input.key_trigger(iface, comp, key_code, key_char)` and `KEY_ENTER` / `KEY_BACKSPACE` / `KEY_ESCAPE`. Text the dialog would reject raises before anything is sent |
+| `botwithus.input` | the game's input dialog: `Input.dialog(game)` with `:mode()`, `:is_open()`, `:text()`, `:enter_amount(3 \| "10k")` / `:enter_text(name)` (type and submit), `:submit()`, `:cancel()`, `:backspace(n)`, `:clear()` (false when the dialog is closed or in the wrong mode; text it would reject raises before anything is sent). Low level: `KeyStroke` with `ENTER` / `BACKSPACE` / `ESCAPE`, `fire_keys`, `type_text`, `component_trigger` |
 
 ## Walking: two styles
 
