@@ -52,11 +52,12 @@ gives you `sleep_ticks`, not a millisecond timer, on purpose.
 
 | Module | What it gives you |
 |---|---|
-| `botwithus` | umbrella: `run`, `npcs`, `players`, `objects`, `Game`, `Tile`, `Actions` |
-| `botwithus.game` | `Game.attach()`, `:self()`, `:npcs()`, `:players()`, `:objects()` (visible scenery with `shape` / `rotation` / `resolved_id`), `:clocks()`, `:walk_to()` (one hop), `:path()` (query), `:walk()` (full pathed walk that executes transitions), `:walk_cancel()` |
+| `botwithus` | umbrella: `run`, `npcs`, `players`, `objects`, `Game`, `Tile`, `Actions`, `Input` |
+| `botwithus.game` | `Game.attach()`, `:self()`, `:npcs()`, `:players()`, `:objects()` (visible scenery with `shape` / `rotation` / `resolved_id`), `:clocks()`, `:walk_to()` (one hop), `:path()` (query), `:walk()` (full pathed walk that executes transitions), `:walk_cancel()`, `:queue_actions()` (one round trip), `:varc_int()` / `:varc_string()` |
 | `botwithus.entities` | fluent queries: `:of_type()`, `:within()`, `:where()`, `:nearest()`, `:all()` |
 | `botwithus.tile` | `Tile` with Chebyshev (8-directional) distance |
 | `botwithus.actions` | action ids + builders (`walk_to`, `component_click`, …) |
+| `botwithus.input` | the game's input dialog: `Input.dialog(game)` with `:mode()`, `:is_open()`, `:text()`, `:enter_amount(3 \| "10k")`, `:enter_text(name)`, `:submit()`, `:cancel()`, `:backspace(n)`, `:clear()`; the low-level `Input.key_trigger(iface, comp, key_code, key_char)` and `KEY_ENTER` / `KEY_BACKSPACE` / `KEY_ESCAPE`. Text the dialog would reject raises before anything is sent |
 
 ## Walking: two styles
 
