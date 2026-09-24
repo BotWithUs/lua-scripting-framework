@@ -175,7 +175,9 @@ function Input.validate_name(text)
 end
 
 -- The game's input dialog, read and typed into over one Game. Methods that send return
--- false, sending nothing, when the dialog is closed or in the wrong mode.
+-- false, sending nothing, when the dialog is closed, in the wrong mode, or already holds
+-- text that the new input would push past the mode's rules (a dialog-state failure, not a
+-- bad argument: the caller can clear() and retry).
 local Dialog = {}
 Dialog.__index = Dialog
 
@@ -212,7 +214,7 @@ local function with_enter(strokes) strokes[#strokes + 1] = Input.ENTER; return s
 function Dialog:enter_amount(amount)
   local text = Input.validate_amount(amount)
   if self:mode() ~= "amount" then return false end
-  Input.validate_amount(self:_typed() .. text)
+  if not pcall(Input.validate_amount, self:_typed() .. text) then return false end
   return self:_send(with_enter(strokes_of(text)))
 end
 
@@ -220,7 +222,7 @@ end
 function Dialog:enter_text(text)
   Input.validate_name(text)
   if self:mode() ~= "name" then return false end
-  Input.validate_name(self:_typed() .. text)
+  if not pcall(Input.validate_name, self:_typed() .. text) then return false end
   return self:_send(with_enter(strokes_of(text)))
 end
 

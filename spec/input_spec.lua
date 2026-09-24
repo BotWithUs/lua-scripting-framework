@@ -228,12 +228,18 @@ T["a bad argument raises even when the dialog is closed"] = function(assert_)
   assert_(refused(function() d:enter_amount("b") end, "input rejected:"), "argument before state")
 end
 
-T["text already typed counts toward the limit"] = function(assert_)
-  local d, st = dialog({ text = "123456789" })
-  assert_(refused(function() d:enter_amount(10) end, "input rejected:"), "11 chars in total")
-  d, st = dialog({ text = "5k" })
-  assert_(refused(function() d:enter_amount(3) end, "input rejected:"), "a digit after the suffix")
-  assert_(#st.batches == 0, "nothing sent")
+T["text already typed that would break the rules returns false"] = function(assert_)
+  local cases = {
+    { 7, "123456789", function(d) return d:enter_amount(10) end },    -- 11 chars in total
+    { 7, "5k", function(d) return d:enter_amount(3) end },             -- a digit after the suffix
+    { 7, "2147483", function(d) return d:enter_amount("648") end },    -- over 2^31-1 in total
+    { 2, "abcdefghij", function(d) return d:enter_text("xyz") end },   -- 13 chars in total
+  }
+  for i, c in ipairs(cases) do
+    local d, st = dialog({ mode = c[1], text = c[2] })
+    assert_(c[3](d) == false, "case " .. i .. " returns false")
+    assert_(#st.batches == 0, "case " .. i .. " sent nothing")
+  end
 end
 
 T["wrong or closed dialog returns false"] = function(assert_)
