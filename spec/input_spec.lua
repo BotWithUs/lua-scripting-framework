@@ -177,8 +177,20 @@ T["mode and text"] = function(assert_)
   assert_(dialog({ mode = 0, text = "42" }):text() == "", "closed: empty (varc 2506 outlives the dialog)")
 end
 
-T["unreadable mode raises"] = function(assert_)
-  assert_(refused(function() dialog({ mode = -1 }):submit() end, "input dialog:"), "varc 5 = -1")
+T["unset mode is closed"] = function(assert_)
+  -- Live: in game, before the dialog has ever been opened, varc 5 reads -1.
+  local d, st = dialog({ mode = -1, text = "42" })
+  assert_(d:mode() == "closed", "-1 is closed")
+  assert_(not d:is_open(), "-1 is not open")
+  assert_(d:text() == "", "no text while closed")
+  assert_(d:submit() == false and d:enter_amount(3) == false, "sends return false")
+  assert_(#st.batches == 0, "nothing sent")
+end
+
+T["a failed mode read raises"] = function(assert_)
+  local d = dialog()
+  _G.bwu.varc_int = function() return nil, "rpc timeout" end
+  assert_(refused(function() d:submit() end, "varc_int failed"), "RPC failure is loud")
 end
 
 -- --- refused, nothing sent ---------------------------------------------------------------

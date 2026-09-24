@@ -47,7 +47,8 @@ local I32_MAX = 0x7FFFFFFF
 local PRINTABLE_FIRST, PRINTABLE_LAST = 0x20, 0x7E
 -- Uppercase M is refused until it is live-verified: the dialog is only known to take k, K, m.
 local AMOUNT_MULTIPLIER = { k = 1000, K = 1000, m = 1000000 }
-local MODE_NAMES = { [0] = "closed", [2] = "name", [7] = "amount" }
+-- -1 is what the agent reads for a varc the client holds no value for: closed.
+local MODE_NAMES = { [-1] = "closed", [0] = "closed", [2] = "name", [7] = "amount" }
 
 local function rejected(msg) error("input rejected: " .. msg, 3) end
 
@@ -180,19 +181,15 @@ Dialog.__index = Dialog
 
 function Input.dialog(game) return setmetatable({ _game = game }, Dialog) end
 
--- varc 5 as the game holds it: 0 closed, 2 name, 7 amount, anything else unlisted.
-function Dialog:mode_raw()
-  local raw = self._game:varc_int(Input.VARC_MODE)
-  if raw < 0 then
-    error("input dialog: varc " .. Input.VARC_MODE .. " is unreadable (" .. raw .. "); not in game?", 2)
-  end
-  return raw
-end
+-- varc 5 as the game holds it: 0 closed, 2 name, 7 amount, anything else unlisted. It reads
+-- -1 until the dialog has first been opened this session (the client holds no value yet),
+-- and -1 means closed. A failed read raises (Game:varc_int) instead.
+function Dialog:mode_raw() return self._game:varc_int(Input.VARC_MODE) end
 
 -- "amount", "name", "closed", or "other" for a mode not listed.
 function Dialog:mode() return MODE_NAMES[self:mode_raw()] or "other" end
 
-function Dialog:is_open() return self:mode_raw() ~= Input.MODE_CLOSED end
+function Dialog:is_open() return self:mode() ~= "closed" end
 
 -- What has been typed so far (varc 2506), or "" when the dialog is closed.
 function Dialog:text() return self:is_open() and self:_typed() or "" end
