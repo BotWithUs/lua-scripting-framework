@@ -23,6 +23,12 @@ in the native host, and this layer is safe to open-source because it is just idi
   millisecond timer, so a script cannot accidentally pace off `game_cycle`/`publish_seq`.
 - **Immutable query chaining** — each `entities` filter returns a new query; terminals
   (`:all`/`:nearest`/`:count`/`:first`) read the surface once.
+- **One thread, no background.** `botwithus.clients` reads the host's event queue only
+  inside `poll`/`pump`/`wait_for`, and handlers run only there. `bot.run` waits on that queue
+  only when given a manager (`clients = cm`): reading an event removes it from the queue the
+  whole host shares.
+- **Per-instance state.** A `clients` manager owns its handlers, its view of the clients and
+  its attach claims; nothing lives at module level, so tests stay isolated.
 - **Match the other hosts' lifecycle** — `on_start`/`on_loop`(→ticks or negative)/`on_stop`.
 
 ## Tests

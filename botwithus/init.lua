@@ -2,6 +2,7 @@
 --
 --   local bot = require("botwithus")
 --   bot.run({ manifest = {...}, on_start = ..., on_loop = ..., on_stop = ... })
+--   local cm = bot.clients.new()   -- launch, stop and watch clients
 --
 -- This is the open, author-facing API. It sits entirely on the native `bwu` table
 -- that native-scripting-host installs; it contains no wire code of its own. Requires
@@ -15,6 +16,9 @@ M.Actions  = require("botwithus.actions")
 M.Game     = require("botwithus.game")
 M.Entities = require("botwithus.entities")
 M.Input    = require("botwithus.input")
+
+-- Client management for a management script: bot.clients.new() (see botwithus/clients.lua).
+M.clients  = require("botwithus.clients")
 
 local Script = require("botwithus.script")
 M.run = Script.run
