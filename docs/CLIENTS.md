@@ -96,7 +96,7 @@ to a kind is 0 or `""`.
 
 | `name` | What it tells you |
 |---|---|
-| `client_started` | A client process started. `pid` is the new process. This is also sent after an automatic restart. |
+| `client_started` | A client started. It is also sent after an automatic restart. `pid` is the game process when known, and **0 when the event arrives as the launch is queued**, before any process exists; `cm:clients()` has the pid later. `cm:attach()` looks it up for you. |
 | `client_state` | The client moved to `state`. When it `failed`, `text` is the failure code; otherwise `text` is a progress message. |
 | `client_exited` | The client ended. `exit_code`, and `reason` (`reason_name`: `stopped`, `licence`, `descriptor` or `unknown`). |
 | `agent_updated` | A newer agent was published. |

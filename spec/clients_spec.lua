@@ -377,6 +377,18 @@ T["attach: the pid comes from the service when client_started was missed"] = fun
   assert_(game and game:pid() == 779 and f.clients_calls == 1, "looked up through cm_clients")
 end
 
+T["attach: client_started sent at queue time with pid 0 still attaches"] = function(assert_)
+  local b, f, cm = setup()
+  local h = cm:launch("acct-1")
+  -- What the service sends for a fresh launch: started while queued, before any process.
+  f.push({ kind = b.CM_EV_CLIENT_STARTED, client_id = h.client_id, pid = 0, state = b.CM_STATE_QUEUED })
+  f.push({ kind = b.CM_EV_CLIENT_STATE, client_id = h.client_id, state = b.CM_STATE_INJECTED })
+  f.clients = { f.client({ client_id = h.client_id, pid = 781, state = b.CM_STATE_INJECTED }) }
+  local game = h:wait_attached(10)
+  assert_(game and game:pid() == 781, "pid from the service list, not 0")
+  assert_(#b._state.attaches == 1 and b._state.attaches[1] == 781, "never attached pid 0")
+end
+
 T["attach: a failed launch returns its failure code"] = function(assert_)
   local b, f, cm = setup()
   local h = cm:launch("acct-1")

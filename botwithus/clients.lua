@@ -384,7 +384,9 @@ function Clients:game_for(pid)
   return claim and claim.game
 end
 
--- The pid of a client, from its client_started event or, failing that, the service.
+-- The pid of a client: from a client_started event when it carried one, otherwise from the
+-- service's client list. A client_started sent as the launch is queued has pid 0, because
+-- no process exists yet, so in practice a fresh launch's pid comes from the list.
 function Clients:pid_of(client_id)
   local k = self._known[client_id]
   if k and k.pid and k.pid ~= 0 then return k.pid end
