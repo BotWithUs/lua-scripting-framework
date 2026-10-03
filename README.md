@@ -52,12 +52,30 @@ gives you `sleep_ticks`, not a millisecond timer, on purpose.
 
 | Module | What it gives you |
 |---|---|
-| `botwithus` | umbrella: `run`, `npcs`, `players`, `objects`, `Game`, `Tile`, `Actions`, `Input` |
+| `botwithus` | umbrella: `run`, `npcs`, `players`, `objects`, `Game`, `Tile`, `Actions`, `Input`, `clients` |
 | `botwithus.game` | `Game.attach()`, `:self()`, `:npcs()`, `:players()`, `:objects()` (visible scenery with `shape` / `rotation` / `resolved_id`), `:clocks()`, `:walk_to()` (one hop), `:path()` (query), `:walk()` (full pathed walk that executes transitions), `:walk_cancel()`, `:queue_actions()` (one round trip), `:varc_int()` / `:varc_string()` |
 | `botwithus.entities` | fluent queries: `:of_type()`, `:within()`, `:where()`, `:nearest()`, `:all()` |
+| `botwithus.clients` | client management: `clients.new()` -> `:accounts()`, `:launch()` (-> `:wait_attached()`), `:stop()`, `:clients()`, `:attach()` (once per process), events via `:poll()` / `:pump()` / `:wait_for()` / `:on()`, `:on_close_requested()` and `:ack_close()`. See [docs/CLIENTS.md](docs/CLIENTS.md) |
 | `botwithus.tile` | `Tile` with Chebyshev (8-directional) distance |
 | `botwithus.actions` | action ids + builders (`walk_to`, `component_click`, …) |
 | `botwithus.input` | the game's input dialog: `Input.dialog(game)` with `:mode()`, `:is_open()`, `:text()`, `:enter_amount(3 \| "10k")` / `:enter_text(name)` (type and submit), `:submit()`, `:cancel()`, `:backspace(n)`, `:clear()` (false when the dialog is closed or in the wrong mode; text it would reject raises before anything is sent). Low level: `KeyStroke` with `ENTER` / `BACKSPACE` / `ESCAPE`, `fire_keys`, `type_text`, `component_trigger` |
+
+## Managing clients
+
+A **management script** launches and stops game clients through the BotWithUs launcher's
+background service, and can answer when the launcher asks to close for a data update:
+
+```lua
+local cm     = bot.clients.new()
+local launch = assert(cm:launch(cm:accounts()[1].id))
+local game   = assert(launch:wait_attached(300))   -- attaches once the client is injected
+cm:stop(launch.client_id, "graceful")
+```
+
+Lua scripts have one thread, so events are read with `cm:poll()` / `cm:pump()` /
+`cm:wait_for()`, and handlers run only inside those calls. With no close handler, nothing is
+answered and the script keeps running. See [docs/CLIENTS.md](docs/CLIENTS.md) and
+`examples/manager.lua`.
 
 ## Walking: two styles
 
@@ -82,7 +100,12 @@ No game client needed — the suite injects a fake `bwu` surface.
 scripts\test.ps1        # finds lua/lua5.4/luajit on PATH
 # or directly:
 lua spec\run.lua
+# or with the host's own Lua 5.4, when no lua is installed:
+bwu_host --lua spec\run.lua
 ```
+
+`bwu_host` needs the Python runtime it was built against on `PATH`, because it embeds both
+languages.
 
 ## Layout
 

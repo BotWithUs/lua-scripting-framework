@@ -49,9 +49,16 @@ function M.new(opts)
   }
   local bwu = { PROTOCOL_VERSION = 21, ABI_VERSION = 2, MAX_ACTION_BATCH = 128, _state = state }
 
+  state.attaches = {}   -- pids passed to attach(), in order
+  state.detaches = {}   -- pids of handles passed to detach(), in order
+
   function bwu.discover_pids() return state.pids end
-  function bwu.attach(pid) return { pid = pid } end
-  function bwu.detach(_) end
+  function bwu.attach(pid)
+    state.attaches[#state.attaches + 1] = pid
+    if state.attach_error then return nil, state.attach_error end
+    return { pid = pid }
+  end
+  function bwu.detach(h) state.detaches[#state.detaches + 1] = h.pid end
   function bwu.refresh(_) state.tick = state.tick + 1; state.seq = state.seq + 30; return true end
   function bwu.clocks(_) return { server_tick = state.tick, game_cycle = state.tick * 30, publish_seq = state.seq } end
   function bwu.self(_)
@@ -127,7 +134,126 @@ function M.new(opts)
     return steps
   end
 
+  if opts.no_cm then return bwu end
+  M.install_cm(bwu, opts)
   return bwu
+end
+
+-- The client-management constants, as the native header defines them.
+M.CM_CONSTANTS = {
+  CM_SURFACE_VERSION = 1,
+  CM_ID_MAX = 64, CM_NAME_MAX = 64, CM_TEXT_MAX = 256, CM_SHA_MAX = 72,
+  CM_STATE_QUEUED = 1, CM_STATE_SPAWNING = 2, CM_STATE_INJECTING = 3, CM_STATE_INJECTED = 4,
+  CM_STATE_FAILED = 5, CM_STATE_EXITED = 6,
+  CM_KIND_JAGEX = 1, CM_KIND_STEAM = 2, CM_KIND_ATTACHED = 3,
+  CM_ORIGIN_UI = 1, CM_ORIGIN_AUTOMATION = 2,
+  CM_LIC_OK = 1, CM_LIC_RETRYING = 2, CM_LIC_DROPPED = 3, CM_LIC_UNTRACKED = 4,
+  CM_EXIT_STOPPED = 1, CM_EXIT_LICENCE = 2, CM_EXIT_DESCRIPTOR = 3, CM_EXIT_UNKNOWN = 4,
+  CM_STOP_GRACEFUL = 1, CM_STOP_KILL = 2,
+  CM_ACK_CLOSING = 1, CM_ACK_DECLINED = 2, CM_ACK_LATER = 3,
+  CM_EV_CLIENT_STARTED = 1, CM_EV_CLIENT_STATE = 2, CM_EV_CLIENT_EXITED = 3,
+  CM_EV_AGENT_UPDATED = 4, CM_EV_DATA_UPDATE_AVAILABLE = 5, CM_EV_DATA_UPDATE_APPLIED = 6,
+  CM_EV_CLOSE_REQUESTED = 7, CM_EV_LICENCE_STATE = 8, CM_EV_SERVICE_SHUTTING_DOWN = 9,
+  CM_EV_SERVICE_LOST = 10, CM_EV_SERVICE_RESTORED = 11, CM_EV_EVENTS_DROPPED = 12,
+}
+
+-- The cm_* functions, with the native binding's shapes: a failure is nil, code, message;
+-- every event carries all nine fields, 0 or "" where unused; is_agent_stale is a boolean.
+-- Test controls live on bwu._cm:
+--   down       nil when the service is up, else the code calls fail with
+--   refuse     method name -> wire code the service answers with (e.g. launch = "rate_limited")
+--   retry_after_ms   what cm_last_retry_after_ms() reports after a refused launch
+--   on_poll    function(cm) run when a poll finds the queue empty (to script a sequence)
+-- and records what was sent: launches, stops, acks, polls (the timeouts), clients_calls.
+function M.install_cm(bwu, opts)
+  for k, v in pairs(M.CM_CONSTANTS) do bwu[k] = v end
+  local cm = {
+    accounts = opts.accounts or { { id = "acct-1", name = "Main" }, { id = "acct-2", name = "Alt" } },
+    clients = opts.clients or {}, events = {}, next_id = 1, last_retry = -1,
+    launches = {}, stops = {}, acks = {}, polls = {}, clients_calls = 0,
+    refuse = {}, retry_after_ms = -1, down = nil, on_poll = nil,
+  }
+  bwu._cm = cm
+
+  local function fail(method)
+    local code = cm.down or cm.refuse[method]
+    if not code then return nil end
+    cm.last_retry = (code == "rate_limited") and cm.retry_after_ms or -1
+    return code
+  end
+
+  -- Queue an event, filling every field the binding always sets.
+  function cm.push(fields)
+    local ev = { kind = 0, pid = 0, state = 0, exit_code = 0, reason = 0, hosts_blocking = 0,
+                 request_id = 0, client_id = "", text = "" }
+    for k, v in pairs(fields) do ev[k] = v end
+    cm.events[#cm.events + 1] = ev
+  end
+
+  -- A client record with every field the binding sets.
+  function cm.client(fields)
+    local c = { client_id = "", account_id = "acct-1", account_name = "Main", pid = 0,
+                character_index = -1, kind = 1, origin = 2, state = 1, licence_state = 1,
+                licence_failures = 0, is_agent_stale = false, restart_of = 0,
+                started_at_ms = 1700000000000, agent_sha = "" }
+    for k, v in pairs(fields) do c[k] = v end
+    return c
+  end
+
+  function bwu.cm_accounts()
+    local code = fail("accounts")
+    if code then return nil, code, "accounts: " .. code end
+    local out = {}
+    for i, a in ipairs(cm.accounts) do out[i] = { id = a.id, name = a.name } end
+    return out
+  end
+  function bwu.cm_launch(account_id, character_index)
+    local code = fail("launch")
+    if code then return nil, code, "launch: " .. code end
+    local id = "c" .. cm.next_id
+    cm.next_id = cm.next_id + 1
+    cm.launches[#cm.launches + 1] = { account_id = account_id, character_index = character_index or -1, client_id = id }
+    return id
+  end
+  function bwu.cm_last_retry_after_ms() return cm.last_retry end
+  function bwu.cm_stop(client_id, mode)
+    mode = mode or bwu.CM_STOP_GRACEFUL
+    if mode ~= bwu.CM_STOP_GRACEFUL and mode ~= bwu.CM_STOP_KILL then
+      return nil, "bad_argument", "bad stop mode"
+    end
+    local code = fail("stop")
+    if code then return nil, code, "stop: " .. code end
+    cm.stops[#cm.stops + 1] = { client_id = client_id, mode = mode }
+    return true
+  end
+  function bwu.cm_clients()
+    cm.clients_calls = cm.clients_calls + 1
+    local code = fail("clients")
+    if code then return nil, code, "clients: " .. code end
+    local out = {}
+    for i, c in ipairs(cm.clients) do
+      local copy = {}
+      for k, v in pairs(c) do copy[k] = v end
+      out[i] = copy
+    end
+    return out
+  end
+  -- The real poll keeps working while the service is down: it waits on the host's queue.
+  function bwu.cm_poll_event(timeout_ms)
+    cm.polls[#cm.polls + 1] = timeout_ms or 0
+    if #cm.events == 0 and cm.on_poll then cm.on_poll(cm) end
+    if #cm.events == 0 then return nil end
+    return table.remove(cm.events, 1)
+  end
+  function bwu.cm_ack_close(request_id, decision)
+    if request_id <= 0 or decision < bwu.CM_ACK_CLOSING or decision > bwu.CM_ACK_LATER then
+      return nil, "bad_argument", "bad ack"
+    end
+    local code = fail("ack_close")
+    if code then return nil, code, "ack_close: " .. code end
+    cm.acks[#cm.acks + 1] = { request_id = request_id, decision = decision }
+    return true
+  end
 end
 
 return M
