@@ -25,7 +25,8 @@ end
 local root = repo_root()
 package.path = root .. "?.lua;" .. root .. "?/init.lua;" .. package.path
 
-local specs = { "spec.api_spec", "spec.orientation_spec", "spec.input_spec", "spec.clients_spec" }
+local specs = { "spec.api_spec", "spec.orientation_spec", "spec.input_spec", "spec.clients_spec",
+                "spec.variables_spec" }
 
 local passed, failed = 0, 0
 local failures = {}

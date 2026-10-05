@@ -19,6 +19,7 @@ M.Input    = require("botwithus.input")
 
 -- Client management for a management script: bot.clients.new() (see botwithus/clients.lua).
 M.clients  = require("botwithus.clients")
+M.Variables = require("botwithus.variables")
 
 local Script = require("botwithus.script")
 M.run = Script.run
