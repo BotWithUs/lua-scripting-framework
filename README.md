@@ -58,7 +58,10 @@ stops on an error, the file ends with a crash block: the phase (`on_start`, `on_
 iteration, `on_stop`), the traceback taken where the error was raised, the innermost frame in
 your code, and the last 200 host calls the script made. The native host owns the file and the
 redaction; `bot.run` only tells it the phase. `io.stdout` / `io.stderr` are proxies under the
-host, so `io.type(io.stderr)` is `nil` there.
+host, so `io.type(io.stderr)` is `nil` there. The host also loads every Lua file under a short
+chunk name, so tracebacks read `myscript.lua:12` and `botwithus/script.lua:138` rather than a
+full install path (which could carry your Windows user name). A script that finds its own
+folder from `debug.getinfo(1, "S").source` only gets one when it was launched by a relative path.
 
 ## The one pacing rule
 
