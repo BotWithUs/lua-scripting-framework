@@ -273,6 +273,30 @@ function M.install_cm(bwu, opts)
   end
 end
 
+-- Add a recording stand-in for the native run log (bwu.runlog_*) to a fake. The real sink,
+-- redactor and traceback parsing are native (tested in native-scripting-host); this records
+-- what the Lua runner hands them. b._runlog holds opens, crumbs, crashes, writes and closes.
+function M.with_runlog(b)
+  local rec = { opens = {}, crumbs = {}, crashes = {}, writes = {}, closes = {}, next_id = 7 }
+  b._runlog = rec
+  b.LOG_DEBUG, b.LOG_INFO, b.LOG_WARN, b.LOG_ERROR = 10, 20, 30, 40
+  b.runlog_open = function(info)
+    rec.opens[#rec.opens + 1] = info
+    rec.next_id = rec.next_id + 1
+    return rec.next_id
+  end
+  b.runlog_crumb = function(kind, detail) rec.crumbs[#rec.crumbs + 1] = kind .. " " .. detail end
+  b.runlog_crash = function(c)
+    rec.crashes[#rec.crashes + 1] = c
+    return #rec.crashes == 1   -- the native side keeps only a run's first crash block
+  end
+  b.runlog_write = function(level, logger, msg)
+    rec.writes[#rec.writes + 1] = { level = level, logger = logger, msg = msg }
+  end
+  b.runlog_close = function(id) rec.closes[#rec.closes + 1] = id end
+  return b
+end
+
 -- One record in the shape bwu.read_varps / read_varbits returns.
 function M.var_record(id, state, value, opts)
   opts = opts or {}
