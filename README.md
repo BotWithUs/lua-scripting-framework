@@ -40,6 +40,26 @@ Run it: `bwu_host --lua examples/woodcutter.lua` (see `native-scripting-host`).
 a **delay in server ticks**; a negative return stops the script. This matches the Java and
 C# hosts exactly.
 
+## Logging and run logs
+
+Use `bwu.log` rather than `print`:
+
+```lua
+bwu.log.debug("checking bank at", tile)
+bwu.log.warn("no food left")
+```
+
+`bwu.log.debug/info/warn/error` take any values (joined with spaces, like `print` with
+tabs). Under `bwu_host` every run of a script writes one file under
+`~/.botwithus/logs/scripts/<script-slug>/`, redacted before it reaches disk (account and
+character names, emails, tokens, IPs, your user folder). It holds DEBUG and up: `bwu.log`,
+`print`, `io.write` and `io.stderr:write`; the console shows INFO and up. When `bot.run`
+stops on an error, the file ends with a crash block: the phase (`on_start`, `on_loop` with its
+iteration, `on_stop`), the traceback taken where the error was raised, the innermost frame in
+your code, and the last 200 host calls the script made. The native host owns the file and the
+redaction; `bot.run` only tells it the phase. `io.stdout` / `io.stderr` are proxies under the
+host, so `io.type(io.stderr)` is `nil` there.
+
 ## The one pacing rule
 
 There are three clocks on the surface, and only one is for pacing: **`server_tick`**

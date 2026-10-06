@@ -188,4 +188,90 @@ T["facing: self and players carry it too"] = function(assert_)
   assert_(p.facing == "SOUTH" and p.facing_degrees == 180, "raw 0 is south, 180 degrees")
 end
 
+-- Run log (bwu.runlog_*) -------------------------------------------------------------------
+
+local function failing_script(fail_in, at_iteration)
+  local s = { manifest = { name = "Crashy", version = "1.2", author = "spec" }, loops = 0 }
+  s.on_start = function() if fail_in == "on_start" then error("start broke") end end
+  s.on_loop = function()
+    s.loops = s.loops + 1
+    if fail_in == "on_loop" and s.loops == at_iteration then error("loop broke") end
+    return 1
+  end
+  s.on_stop = function() if fail_in == "on_stop" then error("stop broke") end end
+  return s
+end
+
+local function run_capturing(script, opts)
+  -- Through a Lua frame of this file, so the runner sees api_spec.lua as its caller.
+  return pcall(function() bot.run(script, opts or { max_iters = 5 }) end)   -- not a tail call
+end
+
+T["runlog: a run opens with the manifest and pid, records state, and closes"] = function(assert_)
+  local b = fake_bwu.with_runlog(fake_bwu.new())
+  _G.bwu = b
+  local ok = run_capturing(failing_script(nil))
+  local rec = b._runlog
+  assert_(ok, "a clean run does not raise")
+  assert_(#rec.opens == 1, "one run opened")
+  local o = rec.opens[1]
+  assert_(o.name == "Crashy" and o.version == "1.2" and o.author == "spec", "manifest passed")
+  assert_(o.pid == 4242, "the attached pid is passed (it gives the slot)")
+  assert_(type(o.path) == "string" and o.path:find("api_spec.lua", 1, true), "the calling file is hashed")
+  assert_(rec.crumbs[1] == "state STARTING->RUNNING" and rec.crumbs[2] == "state RUNNING->STOPPED",
+          "state crumbs: " .. table.concat(rec.crumbs, " | "))
+  assert_(#rec.crashes == 0, "no crash block")
+  assert_(#rec.closes == 1 and rec.closes[1] == 8, "the run is closed")
+end
+
+T["runlog: an on_loop error is phase on_loop with its iteration and a raise-site traceback"] = function(assert_)
+  local b = fake_bwu.with_runlog(fake_bwu.new())
+  _G.bwu = b
+  local ok, err = run_capturing(failing_script("on_loop", 3))
+  local rec = b._runlog
+  assert_(not ok and tostring(err):find("loop broke", 1, true), "the error is re-raised unchanged")
+  assert_(#rec.crashes == 1, "one crash block")
+  local c = rec.crashes[1]
+  assert_(c.phase == "on_loop" and c.iteration == 3, "phase on_loop, iteration 3: " .. c.phase .. " " .. c.iteration)
+  assert_(c.report:find("loop broke", 1, true) and c.report:find("stack traceback:", 1, true), "traceback text")
+  assert_(c.report:find("api_spec.lua", 1, true), "the traceback reaches the failing script frame")
+  assert_(rec.crumbs[#rec.crumbs] == "state RUNNING->ERROR", "the last crumb is the state change")
+  assert_(#rec.closes == 1, "closed even after a crash")
+end
+
+T["runlog: an on_start error is phase on_start, not on_loop"] = function(assert_)
+  local b = fake_bwu.with_runlog(fake_bwu.new())
+  _G.bwu = b
+  local ok = run_capturing(failing_script("on_start"))
+  local c = b._runlog.crashes[1]
+  assert_(not ok and c and c.phase == "on_start" and c.iteration == 0, "phase on_start, iteration 0")
+end
+
+T["runlog: an on_stop error is phase on_stop and is not re-raised"] = function(assert_)
+  local b = fake_bwu.with_runlog(fake_bwu.new())
+  _G.bwu = b
+  local ok = run_capturing(failing_script("on_stop"))
+  local c = b._runlog.crashes[1]
+  assert_(ok, "on_stop failures stay swallowed, as before")
+  assert_(c and c.phase == "on_stop" and c.report:find("stop broke", 1, true), "phase on_stop")
+end
+
+T["runlog: a second failure after the crash block becomes an ERROR line"] = function(assert_)
+  local b = fake_bwu.with_runlog(fake_bwu.new())
+  _G.bwu = b
+  local s = failing_script("on_loop", 1)
+  s.on_stop = function() error("stop also broke") end
+  run_capturing(s)
+  local rec = b._runlog
+  assert_(#rec.crashes == 2 and rec.crashes[2].phase == "on_stop", "both offered to the sink")
+  assert_(#rec.writes == 1 and rec.writes[1].level == 40 and rec.writes[1].msg:find("stop also broke", 1, true),
+          "the refused second crash is kept as an ERROR line")
+end
+
+T["runlog: a surface without runlog_* runs exactly as before"] = function(assert_)
+  _G.bwu = fake_bwu.new()
+  local ok, err = run_capturing(failing_script("on_loop", 2))
+  assert_(not ok and tostring(err):find("loop broke", 1, true), "error still re-raised")
+end
+
 return T
