@@ -274,4 +274,44 @@ T["runlog: a surface without runlog_* runs exactly as before"] = function(assert
   assert_(not ok and tostring(err):find("loop broke", 1, true), "error still re-raised")
 end
 
+T["open interfaces carry type, client_opened and is_modal (wire v23)"] = function(assert_)
+  _G.bwu = fake_bwu.new()
+  local g = bot.Game.attach()
+  local rows, total = g:open_ifaces()
+  assert_(#rows == 3 and total == 3, "three rows, total 3")
+  assert_(rows[1].id == 1477 and rows[1].type == bot.Game.OPEN_IFACE_TYPE_OVERLAY
+          and not rows[1].is_modal, "HUD panel is an overlay")
+  assert_(rows[2].id == 517 and rows[2].type == bot.Game.OPEN_IFACE_TYPE_MODAL
+          and rows[2].is_modal, "bank is modal")
+  assert_(rows[3].type == bot.Game.OPEN_IFACE_TYPE_CHILD and rows[3].client_opened,
+          "CS2-opened child carries the client_opened bit")
+end
+
+T["open-interface type constants mirror BWU_OPEN_IFACE_TYPE_*"] = function(assert_)
+  local G = bot.Game
+  assert_(G.OPEN_IFACE_TYPE_MODAL == 0 and G.OPEN_IFACE_TYPE_OVERLAY == 1
+          and G.OPEN_IFACE_TYPE_CHILD == 3 and G.OPEN_IFACE_TYPE_UNKNOWN == 7, "0 / 1 / 3 / 7")
+end
+
+T["modal queries see only modal interfaces"] = function(assert_)
+  _G.bwu = fake_bwu.new()
+  local g = bot.Game.attach()
+  local modal = g:modal_ifaces()
+  assert_(#modal == 1 and modal[1] == 517, "the bank is the only modal")
+  assert_(g:is_modal_open(), "a modal is open")
+  assert_(g:is_interface_open(1432) and not g:is_interface_open(1188), "is_interface_open by id")
+
+  _G.bwu = fake_bwu.new({ open_ifaces_ = {
+    { id = 1477, type = 1, client_opened = false, is_modal = false },
+  } })
+  g = bot.Game.attach()
+  assert_(not g:is_modal_open() and #g:modal_ifaces() == 0, "overlays alone are not modal")
+end
+
+T["open-interface total reports truncation"] = function(assert_)
+  _G.bwu = fake_bwu.new({ open_iface_total = 300 })
+  local rows, total = bot.Game.attach():open_ifaces()
+  assert_(#rows == 3 and total == 300, "the total comes through beside the rows")
+end
+
 return T

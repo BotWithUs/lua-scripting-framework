@@ -38,6 +38,13 @@ function M.new(opts)
       { id = 1276, resolved_id = 1276, tile = { x = 3198, y = 3200, plane = 0 }, shape = 10, rotation = 0, flags = 0x4 },
       { id = 125195, resolved_id = 125205, tile = { x = 3210, y = 3210, plane = 0 }, shape = 10, rotation = 2, flags = 0x2 },
     },
+    -- BWU_OPEN_IFACE_TYPE_*: 0 modal, 1 overlay, 3 CS2-opened child
+    open_ifaces_ = opts.open_ifaces_ or {
+      { id = 1477, type = 1, client_opened = false, is_modal = false },
+      { id = 517,  type = 0, client_opened = false, is_modal = true },
+      { id = 1432, type = 3, client_opened = true,  is_modal = false },
+    },
+    open_iface_total = opts.open_iface_total,   -- nil: the row count
     actions = {},   -- recorded queue_action calls
     batches = {},   -- recorded queue_actions calls, one list per call
     queue_accept = opts.queue_accept,  -- nil: queue_actions takes every action
@@ -55,7 +62,9 @@ function M.new(opts)
                 -- BWU_VARP_* / BWU_VAR_KIND_* as native-scripting-host exports them
                 VARP_UNAVAILABLE = 0, VARP_DEFAULT_NOT_SET_CLIENTSIDE = 1, VARP_SET = 2,
                 VARP_NO_SUCH_VARP = 3, VAR_KIND_UNKNOWN = -1, VAR_KIND_INT = 0, VAR_KIND_LONG = 1,
-                VAR_KIND_STRING = 2, VAR_NO_VALUE = -1 }
+                VAR_KIND_STRING = 2, VAR_NO_VALUE = -1,
+                OPEN_IFACE_TYPE_MODAL = 0, OPEN_IFACE_TYPE_OVERLAY = 1, OPEN_IFACE_TYPE_CHILD = 3,
+                OPEN_IFACE_TYPE_UNKNOWN = 7 }
 
   state.attaches = {}   -- pids passed to attach(), in order
   state.detaches = {}   -- pids of handles passed to detach(), in order
@@ -101,6 +110,13 @@ function M.new(opts)
                  shape = o.shape, rotation = o.rotation, flags = o.flags }
     end
     return out
+  end
+  function bwu.open_ifaces(_)
+    local out = {}
+    for i, r in ipairs(state.open_ifaces_) do
+      out[i] = { id = r.id, type = r.type, client_opened = r.client_opened, is_modal = r.is_modal }
+    end
+    return out, state.open_iface_total or #out
   end
   function bwu.queue_action(_, id, p1, p2, p3)
     state.actions[#state.actions + 1] = { id = id, p1 = p1, p2 = p2, p3 = p3 }
