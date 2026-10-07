@@ -232,4 +232,21 @@ function Game:varbit(id) return self:read_varbit(id).value end
 -- 1 once varp defaults come from the cache, 0 while it warms up after attach, -1 never.
 function Game:varp_defaults_status() return Variables.defaults_status(surface()) end
 
+-- Local life points, (current, max), from varps 13537 / 13538, or nil while unknown (lobby,
+-- entering the world, the varp-default warm-up, a failed read). The host reads both varps
+-- once per server tick and caches a known reading for the rest of it, so calling this every
+-- loop is cheap. Raises if the pipe to the client is gone. Feature-detected: on a bwu_host
+-- that predates it, has_local_health() is false and local_health() raises.
+function Game:has_local_health()
+  return surface().local_health ~= nil
+end
+
+function Game:local_health()
+  local fn = surface().local_health
+  if fn == nil then
+    error("botwithus: this bwu_host has no local_health; it predates it -- update it", 2)
+  end
+  return fn(host(self))
+end
+
 return Game

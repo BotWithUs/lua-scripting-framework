@@ -132,4 +132,36 @@ T["defaults status is forwarded"] = function(assert_)
   assert_(g:varp_defaults_status() == -1, "status -1")
 end
 
+-- local_health: Game:local_health forwards the host's bwu.local_health (which owns the varp
+-- read, the both-or-nothing rule and the per-tick cache), and is feature-detected.
+T["local_health: a known reading is (current, max)"] = function(assert_)
+  _G.bwu = fake_bwu.new({ health = { 850, 990 } })
+  local g = bot.Game.attach()
+  assert_(g:has_local_health(), "the surface has local_health")
+  local cur, max = g:local_health()
+  assert_(cur == 850 and max == 990, "both values come through")
+  assert_(rawget(_G, "bwu")._state.health_calls == 1, "one surface call")
+end
+
+T["local_health: unknown is nil"] = function(assert_)
+  _G.bwu = fake_bwu.new()
+  local cur, max = bot.Game.attach():local_health()
+  assert_(cur == nil and max == nil, "nil while unknown")
+end
+
+T["local_health: feature-detected on an older host"] = function(assert_)
+  _G.bwu = fake_bwu.new({ no_local_health = true })
+  local g = bot.Game.attach()
+  assert_(g:has_local_health() == false, "an older host has no local_health")
+  local ok, err = pcall(function() return g:local_health() end)
+  assert_(not ok and tostring(err):find("predates") ~= nil, "a clear error")
+end
+
+T["local_health: a dead transport raises through"] = function(assert_)
+  _G.bwu = fake_bwu.new({ health = { 1, 1 } })
+  rawget(_G, "bwu").local_health = function() error("bwu.local_health: pipe disconnected") end
+  local ok, err = pcall(function() return bot.Game.attach():local_health() end)
+  assert_(not ok and tostring(err):find("pipe disconnected") ~= nil, "the host's error surfaces")
+end
+
 return T
