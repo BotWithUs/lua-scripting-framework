@@ -192,9 +192,59 @@ function Game:walk(x, y, plane, radius)
   return ok == true, err
 end
 
--- Request cancellation of an in-flight :walk (idempotent).
+-- Request cancellation of an in-flight walk -- :walk, :walk_ex or :walk_start (idempotent).
 function Game:walk_cancel()
   return surface().walk_cancel(host(self))
+end
+
+-- Walk progress (botwithus.walk has the constants and helpers). Feature-detected: on a
+-- bwu_host that predates it, has_walk_progress() is false and the calls below raise.
+function Game:has_walk_progress()
+  return surface().walk_start ~= nil
+end
+
+local function walk_fn(name)
+  local fn = surface()[name]
+  if fn == nil then
+    error("botwithus: this bwu_host has no " .. name .. "; it predates walk progress -- update it", 3)
+  end
+  return fn
+end
+
+-- BLOCKING like :walk, but returns a result table: status, result, final_event, fail_step,
+-- fail_transition, replans, elapsed_ms, transition (the one last attempted), error, and
+-- events. Returns (nil, err) if a walk is already running on this host.
+function Game:walk_ex(x, y, plane, radius)
+  return walk_fn("walk_ex")(host(self), x, y, plane or 0, radius or 1)
+end
+
+-- Start a walk and return at once: (true), or (false, err) if one is already running. Lua has
+-- no threads, so this is how a script watches a walk and steps in: poll :walk_events /
+-- :walk_wait (a short timeout) from its loop and call :walk_cancel on STUCK.
+function Game:walk_start(x, y, plane, radius)
+  local ok, err = walk_fn("walk_start")(host(self), x, y, plane or 0, radius or 1)
+  return ok == true, err
+end
+
+-- The current or last walk's result table, or nil if this host has never walked.
+function Game:walk_status()
+  return walk_fn("walk_status")(host(self))
+end
+
+-- Wait up to `timeout_ms` (default 0) for the walk to end; its result table (status RUNNING
+-- if it has not ended), or nil if never walked. Blocks the script for at most timeout_ms.
+function Game:walk_wait(timeout_ms)
+  local t = timeout_ms or 0
+  if t < 0 then t = 0 end
+  return walk_fn("walk_wait")(host(self), t)
+end
+
+-- The walk's events from index `since` (0-based, default 0) on. Keep a cursor:
+-- since = since + #events.
+function Game:walk_events(since)
+  local s = since or 0
+  if s < 0 then s = 0 end
+  return walk_fn("walk_events")(host(self), s)
 end
 
 -- Varps and varbits (see botwithus.variables for what each state means). Decide on `state`,

@@ -130,6 +130,37 @@ function M.new(opts)
     return false, "did not arrive"
   end
   function bwu.walk_cancel(_) state.walk_cancelled = true end
+  -- Walk progress, in the real binding's table shape (native-scripting-host's
+  -- tests/bindings/walk_check.lua reads the same fields). opts.walk_progress is the result
+  -- table (nil = never walked / refuses a start); opts.walk_events the event list.
+  -- opts.no_walk_progress leaves these out, like a bwu_host that predates them.
+  if not opts.no_walk_progress then
+    state.walk_waits = {}
+    local function copy_events(since)
+      local out = {}
+      for i = since + 1, #(opts.walk_events or {}) do out[#out + 1] = opts.walk_events[i] end
+      return out
+    end
+    function bwu.walk_ex(_, x, y, plane, radius)
+      state.walks[#state.walks + 1] = { x = x, y = y, plane = plane, radius = radius }
+      if opts.walk_progress == nil then return nil, "a walk is already running on this host" end
+      local r = {}
+      for k, v in pairs(opts.walk_progress) do r[k] = v end
+      r.events = copy_events(0)
+      return r
+    end
+    function bwu.walk_start(_, x, y, plane, radius)
+      state.walks[#state.walks + 1] = { x = x, y = y, plane = plane, radius = radius }
+      if opts.walk_progress == nil then return false, "a walk is already running on this host" end
+      return true
+    end
+    function bwu.walk_status(_) return opts.walk_progress end
+    function bwu.walk_wait(_, timeout_ms)
+      state.walk_waits[#state.walk_waits + 1] = timeout_ms
+      return opts.walk_progress
+    end
+    function bwu.walk_events(_, since) return copy_events(since or 0) end
+  end
   local function var_read(fn)
     return function(_, ids)
       state.var_calls[#state.var_calls + 1] = { fn = fn, ids = ids }
