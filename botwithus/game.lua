@@ -144,6 +144,47 @@ function Game:objects()
   return out
 end
 
+-- Open-interface types (wire v23), mirroring BWU_OPEN_IFACE_TYPE_* on the native surface:
+-- the client's raw open type, clamped. Observed on client 950-1: MODAL closes when the player
+-- moves (the bank, dialogue), OVERLAY is a HUD panel or the XP popup, CHILD was opened by CS2
+-- and closes with its parent, UNKNOWN means the raw type was above 6. Other values can appear.
+Game.OPEN_IFACE_TYPE_MODAL   = 0
+Game.OPEN_IFACE_TYPE_OVERLAY = 1
+Game.OPEN_IFACE_TYPE_CHILD   = 3
+Game.OPEN_IFACE_TYPE_UNKNOWN = 7
+
+-- The open interfaces, in the agent's table order. Each row carries:
+--   id             the interface id
+--   type           Game.OPEN_IFACE_TYPE_*
+--   client_opened  true when CS2 opened it
+--   is_modal       true exactly when type is MODAL: decide modality on this
+-- The second return is the client table's own size. It is 0 when the agent could not read
+-- the table, and larger than #rows when the agent's list was truncated; only when it equals
+-- #rows (and is not 0) does a missing id prove an interface is closed.
+function Game:open_ifaces()
+  return surface().open_ifaces(host(self))
+end
+
+function Game:is_interface_open(id)
+  for _, row in ipairs(self:open_ifaces()) do
+    if row.id == id then return true end
+  end
+  return false
+end
+
+-- The ids of the open modal interfaces (they close when the player moves).
+function Game:modal_ifaces()
+  local out = {}
+  for _, row in ipairs(self:open_ifaces()) do
+    if row.is_modal then out[#out + 1] = row.id end
+  end
+  return out
+end
+
+function Game:is_modal_open()
+  return #self:modal_ifaces() > 0
+end
+
 -- Queue any action built by botwithus.actions (or a raw {id,p1,p2,p3}).
 function Game:do_action(a)
   return surface().queue_action(host(self), a.id, a.p1 or 0, a.p2 or 0, a.p3 or 0)
