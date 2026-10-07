@@ -20,6 +20,8 @@ M.Input    = require("botwithus.input")
 -- Client management for a management script: bot.clients.new() (see botwithus/clients.lua).
 M.clients  = require("botwithus.clients")
 M.Variables = require("botwithus.variables")
+-- Walk progress constants and helpers (Game:walk_ex / :walk_start ...): see botwithus/walk.lua.
+M.walk     = require("botwithus.walk")
 
 local Script = require("botwithus.script")
 M.run = Script.run

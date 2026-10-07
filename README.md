@@ -109,6 +109,27 @@ answered and the script keeps running. See [docs/CLIENTS.md](docs/CLIENTS.md) an
   it plans, walks, re-plans, and **executes transitions** (doors, stairs, teleports, dialogue)
   until it arrives. **Blocks** for the whole route and returns `(arrived, err)`;
   `:walk_cancel()` stops it. See `examples/banker.lua`.
+- `ctx.game:walk_ex(...)` — the same blocking walk, returning a result table: `status`,
+  `fail_step` / `fail_transition`, `transition` (the loc, NPC or chain the walker last tried,
+  as the host saw it), `replans`, `elapsed_ms`, `error` and `events`.
+- `ctx.game:walk_start(...)` + `:walk_events(since)` / `:walk_wait(ms)` / `:walk_status()` —
+  the non-blocking form. Lua has no threads, so this is how a script watches a walk and steps
+  in (on `STUCK`, say) instead of waiting for the walker to spend its re-plans:
+
+```lua
+local W = require("botwithus.walk")
+if g:has_walk_progress() then            -- false on a bwu_host that predates it
+  assert(g:walk_start(3165, 3486, 0, 2))
+  local seen, r = 0, nil
+  repeat
+    local evs = g:walk_events(seen); seen = seen + #evs
+    if W.has_event(evs, W.EV_STUCK) then g:walk_cancel() end
+    r = g:walk_wait(600)
+  until not W.is_running(r)
+  local t = W.failed_on_transition(r)
+  if t then print("failed on", t.kind, t.object_id, t.x, t.y, t.interact_attempts) end
+end
+```
 
 ## Varps and varbits: decide on the state, not the value
 
