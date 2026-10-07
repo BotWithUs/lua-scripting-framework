@@ -134,6 +134,11 @@ else ... end                             -- "unavailable": lobby, entering the w
 - A varbit takes its base variable's state and decodes the base's value, so a varbit over an
   unset base reads the base's default bits, exactly as the game does.
 
+Life points: `ctx.game:local_health()` returns `current, max` from varps 13537 / 13538, or `nil`
+while unknown (lobby, entering the world, warm-up, a failed read). The host reads them once per
+server tick and caches a known pair, so call it every loop. `:has_local_health()` is false on a
+`bwu_host` that predates it. (`self().health` is always 0: the snapshot carries no self HP.)
+
 ## Run an example
 
 ```powershell

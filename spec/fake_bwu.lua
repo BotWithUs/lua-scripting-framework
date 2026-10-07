@@ -139,6 +139,16 @@ function M.new(opts)
   bwu.read_varps = var_read("read_varps")
   bwu.read_varbits = var_read("read_varbits")
   function bwu.varp_defaults_status() return state.defaults_status end
+  -- local_health: opts.health is {current, max} (nil = unknown); opts.no_local_health leaves
+  -- the function out, like a bwu_host that predates it.
+  if not opts.no_local_health then
+    state.health_calls = 0
+    function bwu.local_health(_)
+      state.health_calls = state.health_calls + 1
+      if opts.health == nil then return nil end
+      return opts.health[1], opts.health[2]
+    end
+  end
   function bwu.path(_, x, y, plane)
     -- straight-line steps from self toward (x,y), matching the native stub's shape
     local sx, sy = state.self_.tile.x, state.self_.tile.y
