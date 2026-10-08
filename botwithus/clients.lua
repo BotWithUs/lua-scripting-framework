@@ -47,6 +47,9 @@ local EVENT_NAMES = {
   CM_EV_LICENCE_STATE = "licence_state", CM_EV_SERVICE_SHUTTING_DOWN = "service_shutting_down",
   CM_EV_SERVICE_LOST = "service_lost", CM_EV_SERVICE_RESTORED = "service_restored",
   CM_EV_EVENTS_DROPPED = "events_dropped",
+  -- The native host package, not data.zip. Absent from an older host's surface, so never named.
+  CM_EV_NATIVE_UPDATE_AVAILABLE = "native_update_available",
+  CM_EV_NATIVE_UPDATE_APPLIED = "native_update_applied",
 }
 local KIND_NAMES   = { CM_KIND_JAGEX = "jagex", CM_KIND_STEAM = "steam", CM_KIND_ATTACHED = "attached" }
 local ORIGIN_NAMES = { CM_ORIGIN_UI = "ui", CM_ORIGIN_AUTOMATION = "automation" }

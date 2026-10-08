@@ -101,6 +101,7 @@ to a kind is 0 or `""`.
 | `client_exited` | The client ended. `exit_code`, and `reason` (`reason_name`: `stopped`, `licence`, `descriptor` or `unknown`). |
 | `agent_updated` | A newer agent was published. |
 | `data_update_available` / `data_update_applied` | A data update is staged, or was applied. |
+| `native_update_available` / `native_update_applied` | The native host package changed state, or a version of it is now current. `text` is the staged or applied sha. It is not a data update, and no host blocks it. Needs a launcher with the `native` topic and a native host that knows these kinds. |
 | `close_requested` | The service asks this host to close for a data update; see below. |
 | `licence_state` | A client's licence changed. `state_name` is `ok`, `retrying`, `dropped` or `untracked`. |
 | `service_shutting_down` | The service is about to stop. |

@@ -147,6 +147,17 @@ T["clients: events get a name and keep their fields"] = function(assert_)
   assert_(ev.state_name == "retrying", "licence state is named from the licence table")
 end
 
+T["clients: native package events have their own names, never the data update's"] = function(assert_)
+  local b, f, cm = setup()
+  f.push({ kind = b.CM_EV_NATIVE_UPDATE_AVAILABLE, text = "ab12", hosts_blocking = 0 })
+  local ev = cm:poll(0)
+  assert_(ev.name == "native_update_available" and ev.text == "ab12", "available: " .. tostring(ev.name))
+  f.push({ kind = b.CM_EV_NATIVE_UPDATE_APPLIED, text = "ab12" })
+  ev = cm:poll(0)
+  assert_(ev.name == "native_update_applied", "applied: " .. tostring(ev.name))
+  assert_(b.CM_EV_NATIVE_UPDATE_AVAILABLE ~= b.CM_EV_DATA_UPDATE_AVAILABLE, "distinct kinds")
+end
+
 T["clients: pump waits once, then drains with 0"] = function(assert_)
   local b, f, cm = setup()
   for _ = 1, 3 do f.push({ kind = b.CM_EV_AGENT_UPDATED, text = "abc" }) end
