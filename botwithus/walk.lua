@@ -34,6 +34,44 @@ M.TX_NPC      = 2
 M.TX_CHAIN    = 3
 M.TX_TELEPORT = 4
 
+-- Walk plan options (bwu_host_surface.h BWU_MOVE_*). MOVE_* are BIT NUMBERS: switch categories
+-- off with disabled_moves = M.moves_mask(M.MOVE_DOORS, ...). RESTRICT_FREE_TO_PLAY is already a
+-- mask bit; add it to a mask with +, never twice.
+M.MOVE_DOORS         = 0
+M.MOVE_SHORTCUTS     = 1
+M.MOVE_PLANE         = 2
+M.MOVE_CLIMBOVERS    = 3
+M.MOVE_TRANSPORTS    = 4
+M.MOVE_TELEPORTS     = 5
+M.MOVE_LODESTONES    = 6
+M.MOVE_FAIRY_RINGS   = 7
+M.MOVE_SPIRIT_TREES  = 8
+M.MOVE_GLIDERS       = 9
+M.MOVE_CHARTERS      = 10
+M.MOVE_MAGIC_CARPETS = 11
+M.MOVE_OTHER_CHAINS  = 12
+M.RESTRICT_FREE_TO_PLAY = 2147483648
+M.MAX_EXCLUDED = 256   -- most transition indices one walk / path may exclude
+
+-- The disabled_moves mask switching off each MOVE_* category given (integer arithmetic only,
+-- so it stays an integer on every Lua the framework supports). A repeat counts once.
+function M.moves_mask(...)
+  local mask, seen = 0, {}
+  for i = 1, select("#", ...) do
+    local c = select(i, ...)
+    if type(c) ~= "number" or c < M.MOVE_DOORS or c > M.MOVE_OTHER_CHAINS or c % 1 ~= 0 then
+      error("botwithus.walk.moves_mask: not a MOVE_* category: " .. tostring(c), 2)
+    end
+    if not seen[c] then
+      seen[c] = true
+      local bit = 1
+      for _ = 1, c do bit = bit * 2 end
+      mask = mask + bit
+    end
+  end
+  return mask
+end
+
 -- True while the walk has not ended.
 function M.is_running(result)
   return result ~= nil and result.status == M.RUNNING

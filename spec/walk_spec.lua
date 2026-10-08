@@ -108,4 +108,68 @@ T["walk progress: feature-detected on an older host"] = function(assert_)
   assert_(not ok and tostring(err):find("predates walk progress") ~= nil, "a clear error")
 end
 
+T["walk options: constants and moves_mask"] = function(assert_)
+  assert_(W.MOVE_DOORS == 0 and W.MOVE_TELEPORTS == 5 and W.MOVE_CHARTERS == 10
+          and W.MOVE_OTHER_CHAINS == 12, "MOVE_* bit numbers match BWU_MOVE_*")
+  assert_(W.RESTRICT_FREE_TO_PLAY == 2147483648 and W.MAX_EXCLUDED == 256, "mask bit, cap")
+  assert_(W.moves_mask(W.MOVE_DOORS, W.MOVE_CHARTERS) == 1025, "doors + charters")
+  assert_(W.moves_mask(W.MOVE_PLANE, W.MOVE_PLANE) == 4, "a repeat counts once")
+  assert_(W.moves_mask() == 0, "nothing switched off")
+  assert_(math.type == nil or math.type(W.moves_mask(W.MOVE_OTHER_CHAINS)) == "integer",
+          "an integer, which the host's lua_tointegerx takes")
+  assert_(not pcall(W.moves_mask, 13), "not a category")
+end
+
+T["walk options: passed through on every call"] = function(assert_)
+  _G.bwu = fake_bwu.new({ walk_progress = result(), walk_arrives = true })
+  local g = bot.Game.attach()
+  local o = { exclude = { 42, 7 }, exclude_loc_siblings = true,
+              disabled_moves = W.moves_mask(W.MOVE_CHARTERS) }
+  g:path(3210, 3210, 0, o)
+  g:walk(3210, 3210, 0, 1, o)
+  g:walk_ex(3210, 3210, 0, 1, o)
+  assert_(g:walk_start(3210, 3210, 0, 1, o) == true, "start accepted")
+  local st = rawget(_G, "bwu")._state
+  assert_(st.paths[1].opts == o, "path got the table")
+  for i = 1, 3 do assert_(st.walks[i].opts == o, "walk call " .. i .. " got the table") end
+  assert_(g:has_walk_options() and g:walk_options_supported(), "detected")
+end
+
+T["walk options: defaults keep the old call"] = function(assert_)
+  _G.bwu = fake_bwu.new({ walk_progress = result() })
+  local g = bot.Game.attach()
+  g:walk_ex(1, 2, 0, 1, {})
+  g:walk_ex(1, 2, 0, 1, { exclude = {}, disabled_moves = 0, exclude_loc_siblings = false })
+  g:path(1, 2, 0, nil)
+  local st = rawget(_G, "bwu")._state
+  assert_(st.walks[1].opts == nil and st.walks[2].opts == nil, "no table passed")
+  assert_(st.paths[1].opts == nil, "path: no table passed")
+  assert_(not pcall(function() return g:walk_ex(1, 2, 0, 1, "exclude") end), "not a table")
+end
+
+T["walk options: an older bwu_host refuses them loudly"] = function(assert_)
+  _G.bwu = fake_bwu.new({ walk_progress = result(), no_walk_options = true })
+  local g = bot.Game.attach()
+  assert_(g:has_walk_options() == false and g:walk_options_supported() == false, "detected")
+  assert_(g:walk_ex(1, 2).status == W.ARRIVED, "a plain walk still works")
+  assert_(g:walk_ex(1, 2, 0, 1, { exclude = {} }).status == W.ARRIVED, "empty options too")
+  for _, call in ipairs({ "path", "walk", "walk_ex", "walk_start" }) do
+    local ok, err = pcall(function()
+      if call == "path" then return g:path(1, 2, 0, { exclude = { 42 } }) end
+      return g[call](g, 1, 2, 0, 1, { exclude = { 42 } })
+    end)
+    assert_(not ok and tostring(err):find("predates them") ~= nil, call .. ": a clear error")
+  end
+end
+
+T["walk options: an older worldwalker.dll refuses exclusions loudly"] = function(assert_)
+  _G.bwu = fake_bwu.new({ walk_progress = result(), cannot_exclude = true })
+  local g = bot.Game.attach()
+  assert_(g:has_walk_options() and g:walk_options_supported() == false, "host yes, dll no")
+  local ok, err = pcall(function() return g:walk_ex(1, 2, 0, 1, { exclude = { 42 } }) end)
+  assert_(not ok and tostring(err):find("cannot exclude transitions") ~= nil, "raised, not ignored")
+  assert_(#rawget(_G, "bwu")._state.walks == 0, "nothing walked")
+  assert_(g:walk_ex(1, 2, 0, 1, { exclude = {} }).status == W.ARRIVED, "an empty exclude walks")
+end
+
 return T

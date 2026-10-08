@@ -231,11 +231,70 @@ function Game:walk_to(x, y)
   return self:do_action(Actions.walk_to(x, y))
 end
 
--- Ask the native pather for a route to a goal tile; returns a list of steps.
-function Game:path(x, y, plane)
-  local steps, err = surface().path(host(self), x, y, plane or 0)
+-- Walk plan options: an optional trailing table on :path / :walk / :walk_ex / :walk_start,
+--   { disabled_moves = W.moves_mask(W.MOVE_CHARTERS), exclude = { 42 }, exclude_loc_siblings = true }
+-- (W = botwithus.walk). `exclude` lists transition indices (result.fail_transition,
+-- transition.transition_index) the planner must not use, on every plan and re-plan of the
+-- walk. nil, or a table with every field at its default, makes exactly the call made before
+-- options existed, so an older bwu_host still works. Anything else on a bwu_host without walk
+-- options raises; so does an exclusion the installed worldwalker.dll cannot honour (the host's
+-- "cannot exclude transitions"). Never silently ignored.
+local function is_default_option(k, v)
+  if k == "disabled_moves" then return v == 0 end
+  if k == "exclude" then return type(v) == "table" and next(v) == nil end
+  if k == "exclude_loc_siblings" then return v == false end
+  return false   -- an unknown key goes to the host, which names it in its error
+end
+
+-- The options to pass on: nil when there are none to apply.
+local function walk_opts(opts)
+  if opts == nil then return nil end
+  if type(opts) ~= "table" then error("botwithus: walk options must be a table", 3) end
+  local any = false
+  for k, v in pairs(opts) do
+    if not is_default_option(k, v) then any = true end
+  end
+  if not any then return nil end
+  if surface().walk_options_supported == nil then
+    error("botwithus: this bwu_host has no walk options (disabled_moves / exclude /"
+          .. " exclude_loc_siblings); it predates them -- update it", 3)
+  end
+  return opts
+end
+
+-- Whether this bwu_host takes walk options at all (see :walk_options_supported).
+function Game:has_walk_options()
+  return surface().walk_options_supported ~= nil
+end
+
+-- True when both this bwu_host and its worldwalker.dll can exclude transitions; false for an
+-- older either. Raises when worldwalker cannot be loaded at all.
+function Game:walk_options_supported()
+  local fn = surface().walk_options_supported
+  if fn == nil then return false end
+  return fn(host(self)) == true
+end
+
+-- Ask the native pather for a route to a goal tile; returns a list of steps. `opts`: the
+-- walk plan options above.
+function Game:path(x, y, plane, opts)
+  local o = walk_opts(opts)
+  local steps, err
+  if o == nil then
+    steps, err = surface().path(host(self), x, y, plane or 0)
+  else
+    steps, err = surface().path(host(self), x, y, plane or 0, o)
+  end
   if not steps then error("botwithus: path failed: " .. tostring(err), 2) end
   return steps
+end
+
+-- Calls `fn` with the goal, adding the options table only when there is one: a bwu_host
+-- without options then sees exactly its old call.
+local function call_walk(fn, self, x, y, plane, radius, opts)
+  local o = walk_opts(opts)
+  if o == nil then return fn(host(self), x, y, plane or 0, radius or 1) end
+  return fn(host(self), x, y, plane or 0, radius or 1, o)
 end
 
 -- Walk all the way to (x, y, plane) within `radius` tiles, via the native executor:
@@ -243,8 +302,8 @@ end
 -- returning only when the walk terminates. BLOCKS for the whole route -- unlike walk_to,
 -- which queues a single hop. Returns (true) on arrival, or (false, err) otherwise. Cancel
 -- an in-flight walk from another coroutine/thread with :walk_cancel().
-function Game:walk(x, y, plane, radius)
-  local ok, err = surface().walk(host(self), x, y, plane or 0, radius or 1)
+function Game:walk(x, y, plane, radius, opts)
+  local ok, err = call_walk(surface().walk, self, x, y, plane, radius, opts)
   return ok == true, err
 end
 
@@ -270,15 +329,15 @@ end
 -- BLOCKING like :walk, but returns a result table: status, result, final_event, fail_step,
 -- fail_transition, replans, elapsed_ms, transition (the one last attempted), error, and
 -- events. Returns (nil, err) if a walk is already running on this host.
-function Game:walk_ex(x, y, plane, radius)
-  return walk_fn("walk_ex")(host(self), x, y, plane or 0, radius or 1)
+function Game:walk_ex(x, y, plane, radius, opts)
+  return call_walk(walk_fn("walk_ex"), self, x, y, plane, radius, opts)
 end
 
 -- Start a walk and return at once: (true), or (false, err) if one is already running. Lua has
 -- no threads, so this is how a script watches a walk and steps in: poll :walk_events /
 -- :walk_wait (a short timeout) from its loop and call :walk_cancel on STUCK.
-function Game:walk_start(x, y, plane, radius)
-  local ok, err = walk_fn("walk_start")(host(self), x, y, plane or 0, radius or 1)
+function Game:walk_start(x, y, plane, radius, opts)
+  local ok, err = call_walk(walk_fn("walk_start"), self, x, y, plane, radius, opts)
   return ok == true, err
 end
 
