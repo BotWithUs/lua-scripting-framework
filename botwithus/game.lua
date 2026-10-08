@@ -21,6 +21,20 @@ end
 local Game = {}
 Game.__index = Game
 
+-- The agent snapshot protocol this framework is written for. It moves in lockstep with
+-- native-scripting-host's BWU_PROTOCOL_VERSION (and NXTLibrary's kProtocolVersion).
+Game.PROTOCOL_VERSION = 23
+
+-- Refuse a host built for another protocol before attaching: the surface's tables would
+-- not be the shapes this framework reads.
+local function require_protocol(b, level)
+  if b.PROTOCOL_VERSION ~= Game.PROTOCOL_VERSION then
+    error("botwithus: this framework is built for agent protocol v" .. Game.PROTOCOL_VERSION
+      .. " but the native host speaks v" .. tostring(b.PROTOCOL_VERSION)
+      .. "; update the framework and the host together", level + 1)
+  end
+end
+
 -- The pid Game.attach() picks when given none: the first discovered client.
 -- `level` is the error level to blame when there is none (default: the caller).
 function Game.attach_target(level)
@@ -32,6 +46,7 @@ end
 -- Attach to a client. With no pid, attaches to the first discovered one.
 function Game.attach(pid)
   local b = surface()
+  require_protocol(b, 2)
   pid = pid or Game.attach_target(3)
   local host, err = b.attach(pid)
   if not host then error("botwithus: attach failed: " .. tostring(err), 2) end

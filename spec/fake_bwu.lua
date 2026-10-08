@@ -58,7 +58,7 @@ function M.new(opts)
     var_calls = {},
     defaults_status = opts.defaults_status or 1,
   }
-  local bwu = { PROTOCOL_VERSION = 21, ABI_VERSION = 2, MAX_ACTION_BATCH = 128, _state = state,
+  local bwu = { PROTOCOL_VERSION = opts.protocol_version or 23, ABI_VERSION = 2, MAX_ACTION_BATCH = 128, _state = state,
                 -- BWU_VARP_* / BWU_VAR_KIND_* as native-scripting-host exports them
                 VARP_UNAVAILABLE = 0, VARP_DEFAULT_NOT_SET_CLIENTSIDE = 1, VARP_SET = 2,
                 VARP_NO_SUCH_VARP = 3, VAR_KIND_UNKNOWN = -1, VAR_KIND_INT = 0, VAR_KIND_LONG = 1,
