@@ -31,6 +31,9 @@ M.npcs    = M.Entities.npcs
 M.players = M.Entities.players
 M.objects = M.Entities.objects
 
+-- The agent protocol this framework is written for; Game.attach refuses any other.
+M.PROTOCOL_VERSION = M.Game.PROTOCOL_VERSION
+
 -- The protocol version the native surface speaks (nil if the surface isn't present).
 function M.protocol_version()
   local b = rawget(_G, "bwu")

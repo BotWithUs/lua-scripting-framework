@@ -16,7 +16,29 @@ end
 
 T["protocol version comes from the surface"] = function(assert_)
   _G.bwu = fake_bwu.new()
-  assert_(bot.protocol_version() == 21, "surface reports v21")
+  assert_(bot.protocol_version() == 23, "surface reports v23")
+end
+
+T["attach refuses a host built for another protocol"] = function(assert_)
+  _G.bwu = fake_bwu.new({ protocol_version = 22 })
+  local ok, err = pcall(bot.Game.attach)
+  assert_(not ok, "attach to a v22 surface must fail")
+  assert_(tostring(err):find("built for agent protocol v23", 1, true), "names the framework's protocol: " .. tostring(err))
+  assert_(tostring(err):find("speaks v22", 1, true), "names the host's protocol: " .. tostring(err))
+  assert_(#_G.bwu._state.attaches == 0, "the native attach is never reached")
+end
+
+T["attach refuses a surface with no protocol version"] = function(assert_)
+  _G.bwu = fake_bwu.new()
+  _G.bwu.PROTOCOL_VERSION = nil
+  local ok, err = pcall(bot.Game.attach)
+  assert_(not ok and tostring(err):find("speaks vnil", 1, true), "a missing version is refused: " .. tostring(err))
+end
+
+T["framework protocol matches the host lockstep value"] = function(assert_)
+  assert_(bot.PROTOCOL_VERSION == 23, "framework is written for v23")
+  _G.bwu = fake_bwu.new()
+  assert_(bot.Game.attach() ~= nil, "a v23 surface attaches")
 end
 
 T["game facade decodes self into a Tile"] = function(assert_)
