@@ -131,6 +131,21 @@ if g:has_walk_progress() then            -- false on a bwu_host that predates it
 end
 ```
 
+**Walk options.** `:path`, `:walk`, `:walk_ex` and `:walk_start` take an optional trailing table:
+`{ exclude = { ... }, exclude_loc_siblings = true, disabled_moves = W.moves_mask(W.MOVE_CHARTERS) }`.
+
+- `exclude` lists transition indices the planner must not use, on every plan and re-plan.
+  Take them from `r.fail_transition` or `transition.transition_index`. It is how a script
+  routes around a transition that failed:
+  `g:walk_ex(x, y, p, 2, { exclude = { r.fail_transition }, exclude_loc_siblings = true })`.
+
+Options are never silently ignored:
+
+- A table with every field at its default is the old call.
+- Anything else on a bwu_host without options (`g:has_walk_options()` false) raises.
+- An exclusion on a worldwalker.dll that cannot honour it raises "cannot exclude
+  transitions". `g:walk_options_supported()` tells you in advance.
+
 ## Varps and varbits: decide on the state, not the value
 
 Varps are set lazily by the server, so most have no client-side entry at all, and a value

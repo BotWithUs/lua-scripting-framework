@@ -136,8 +136,22 @@ function M.new(opts)
   end
   function bwu.varc_int(_, id) return state.varcs[id] or -1 end
   function bwu.varc_string(_, id) return state.varc_strings[id] or "" end
-  function bwu.walk(_, x, y, plane, radius)
-    state.walks[#state.walks + 1] = { x = x, y = y, plane = plane, radius = radius }
+  -- Walk plan options: every walk / path records the options table it got (`opts`, nil when
+  -- none was passed). opts.no_walk_options leaves walk_options_supported out (a bwu_host that
+  -- predates options); opts.cannot_exclude plays a worldwalker.dll without the _opts pair,
+  -- raising the host's refusal for a non-empty exclude.
+  local function take_options(name, o)
+    if o ~= nil and opts.cannot_exclude and o.exclude ~= nil and #o.exclude > 0 then
+      error("bwu." .. name .. ": this worldwalker.dll has no ww_executor_run_opts /"
+            .. " ww_query_opts: cannot exclude transitions; update worldwalker.dll", 0)
+    end
+  end
+  if not opts.no_walk_options then
+    function bwu.walk_options_supported(_) return not opts.cannot_exclude end
+  end
+  function bwu.walk(_, x, y, plane, radius, o)
+    take_options("walk", o)
+    state.walks[#state.walks + 1] = { x = x, y = y, plane = plane, radius = radius, opts = o }
     -- The real executor moves the player; the fake just lands them on the goal on arrival.
     if state.walk_arrives then
       state.self_.tile = { x = x, y = y, plane = plane }
@@ -157,16 +171,18 @@ function M.new(opts)
       for i = since + 1, #(opts.walk_events or {}) do out[#out + 1] = opts.walk_events[i] end
       return out
     end
-    function bwu.walk_ex(_, x, y, plane, radius)
-      state.walks[#state.walks + 1] = { x = x, y = y, plane = plane, radius = radius }
+    function bwu.walk_ex(_, x, y, plane, radius, o)
+      take_options("walk_ex", o)
+      state.walks[#state.walks + 1] = { x = x, y = y, plane = plane, radius = radius, opts = o }
       if opts.walk_progress == nil then return nil, "a walk is already running on this host" end
       local r = {}
       for k, v in pairs(opts.walk_progress) do r[k] = v end
       r.events = copy_events(0)
       return r
     end
-    function bwu.walk_start(_, x, y, plane, radius)
-      state.walks[#state.walks + 1] = { x = x, y = y, plane = plane, radius = radius }
+    function bwu.walk_start(_, x, y, plane, radius, o)
+      take_options("walk_start", o)
+      state.walks[#state.walks + 1] = { x = x, y = y, plane = plane, radius = radius, opts = o }
       if opts.walk_progress == nil then return false, "a walk is already running on this host" end
       return true
     end
@@ -196,7 +212,10 @@ function M.new(opts)
       return opts.health[1], opts.health[2]
     end
   end
-  function bwu.path(_, x, y, plane)
+  state.paths = {}
+  function bwu.path(_, x, y, plane, o)
+    take_options("path", o)
+    state.paths[#state.paths + 1] = { x = x, y = y, plane = plane, opts = o }
     -- straight-line steps from self toward (x,y), matching the native stub's shape
     local sx, sy = state.self_.tile.x, state.self_.tile.y
     local steps, cx, cy = {}, sx, sy
