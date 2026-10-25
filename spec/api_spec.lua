@@ -16,15 +16,15 @@ end
 
 T["protocol version comes from the surface"] = function(assert_)
   _G.bwu = fake_bwu.new()
-  assert_(bot.protocol_version() == 23, "surface reports v23")
+  assert_(bot.protocol_version() == 24, "surface reports v24")
 end
 
 T["attach refuses a host built for another protocol"] = function(assert_)
-  _G.bwu = fake_bwu.new({ protocol_version = 22 })
+  _G.bwu = fake_bwu.new({ protocol_version = 23 })
   local ok, err = pcall(bot.Game.attach)
-  assert_(not ok, "attach to a v22 surface must fail")
-  assert_(tostring(err):find("built for agent protocol v23", 1, true), "names the framework's protocol: " .. tostring(err))
-  assert_(tostring(err):find("speaks v22", 1, true), "names the host's protocol: " .. tostring(err))
+  assert_(not ok, "attach to a v23 surface must fail")
+  assert_(tostring(err):find("built for agent protocol v24", 1, true), "names the framework's protocol: " .. tostring(err))
+  assert_(tostring(err):find("speaks v23", 1, true), "names the host's protocol: " .. tostring(err))
   assert_(#_G.bwu._state.attaches == 0, "the native attach is never reached")
 end
 
@@ -36,9 +36,9 @@ T["attach refuses a surface with no protocol version"] = function(assert_)
 end
 
 T["framework protocol matches the host lockstep value"] = function(assert_)
-  assert_(bot.PROTOCOL_VERSION == 23, "framework is written for v23")
+  assert_(bot.PROTOCOL_VERSION == 24, "framework is written for v24")
   _G.bwu = fake_bwu.new()
-  assert_(bot.Game.attach() ~= nil, "a v23 surface attaches")
+  assert_(bot.Game.attach() ~= nil, "a v24 surface attaches")
 end
 
 T["game facade decodes self into a Tile"] = function(assert_)
@@ -108,7 +108,7 @@ end
 T["players: query + nearest"] = function(assert_)
   _G.bwu = fake_bwu.new()
   local g = bot.Game.attach()
-  assert_(bot.players(g):count() == 2, "two players")
+  assert_(bot.players(g):count() == 3, "three players")
   local p = bot.players(g):where(function(e) return e.server_index == 1001 end):first()
   assert_(p.combat_level == 90 and p.animation_id == 808, "player fields pass through")
   assert_(p.tile.x == 3210, "tile is a Tile")
@@ -334,6 +334,88 @@ T["open-interface total reports truncation"] = function(assert_)
   _G.bwu = fake_bwu.new({ open_iface_total = 300 })
   local rows, total = bot.Game.attach():open_ifaces()
   assert_(#rows == 3 and total == 300, "the total comes through beside the rows")
+end
+
+-- ---- wire v24 ---------------------------------------------------------------
+
+local NBSP = "\xC2\xA0"
+
+T["v24: self carries run energy and weight"] = function(assert_)
+  _G.bwu = fake_bwu.new()
+  local me = bot.Game.attach():self()
+  assert_(me.run_energy == 73 and me.run_weight == 12, "run fields pass through")
+end
+
+T["v24: unknown run fields stay -1"] = function(assert_)
+  _G.bwu = fake_bwu.new({ self_ = { valid = false, tile = { x = 0, y = 0, plane = 0 },
+    server_index = -1, combat_level = 0, health = 0, max_health = 0, orientation = -1,
+    run_energy = -1, run_weight = -1 } })
+  local me = bot.Game.attach():self()
+  assert_(me.run_energy == -1 and me.run_weight == -1, "out of world reads -1, not 0")
+end
+
+T["v24: npc rows carry active_type_id and combat_level"] = function(assert_)
+  _G.bwu = fake_bwu.new()
+  local npcs = bot.Game.attach():npcs()
+  assert_(npcs[1].type_id == 1234 and npcs[1].active_type_id == 1234, "no morph: active == base")
+  assert_(npcs[2].type_id == 1234 and npcs[2].active_type_id == -1, "hidden morph stays -1")
+  assert_(npcs[3].type_id == 9999 and npcs[3].active_type_id == 11476, "morph: active differs")
+  assert_(npcs[3].combat_level == 41, "combat level passes through")
+end
+
+T["v24: player names pass through raw, NBSP kept"] = function(assert_)
+  _G.bwu = fake_bwu.new()
+  local rows = bot.Game.attach():players()
+  assert_(rows[2].name == "Sir" .. NBSP .. "Test", "raw name keeps U+00A0")
+  assert_(rows[3].name == "", "undecoded name is empty")
+  assert_(rows[2].name_truncated == false, "truncated flag passes through")
+end
+
+T["v24: names compare with NBSP normalised on both sides"] = function(assert_)
+  local E = require("botwithus.entities")
+  assert_(E.names_equal("Sir" .. NBSP .. "Test", "Sir Test"), "NBSP == space")
+  assert_(E.names_equal("Sir Test", "Sir" .. NBSP .. "Test"), "either side")
+  assert_(not E.names_equal("Sir Test", "SirTest"), "a space is not nothing")
+  assert_(E.normalize_name("a" .. NBSP .. "b") == "a b", "normalize_name")
+end
+
+T["v24: an empty name never matches"] = function(assert_)
+  local E = require("botwithus.entities")
+  assert_(not E.names_equal("", ""), "empty never equals empty")
+  assert_(not E.names_equal("", "Me") and not E.names_equal("Me", ""), "empty never matches")
+  assert_(not E.names_equal(nil, "Me"), "a missing name never matches")
+end
+
+T["v24: players:named() filters by normalised name"] = function(assert_)
+  _G.bwu = fake_bwu.new()
+  local g = bot.Game.attach()
+  local hit = bot.players(g):named("Sir Test"):all()
+  assert_(#hit == 1 and hit[1].server_index == 1001, "NBSP name found by its spaced form")
+  assert_(bot.players(g):named(""):count() == 0, "empty filter matches nobody")
+end
+
+T["v24: player_appearance returns the agent's table"] = function(assert_)
+  local reply = { render_id = 1426, npc_transform_id = -1, gender = 0,
+                  slots = { { kit = 0, item = -1 }, { kit = -1, item = 841 } },
+                  colours = { 3, 16 } }
+  _G.bwu = fake_bwu.new({ appearances = { [1001] = reply } })
+  local g = bot.Game.attach()
+  local a = g:player_appearance(1001)
+  assert_(a == reply, "the surface's table is returned")
+  assert_(_G.bwu._state.appearance_calls[1] == 1001, "server index forwarded")
+end
+
+T["v24: player_appearance refusal is nil, code"] = function(assert_)
+  _G.bwu = fake_bwu.new({ appearances = { [1002] = "appearance_not_loaded" } })
+  local a, code = bot.Game.attach():player_appearance(1002)
+  assert_(a == nil and code == "appearance_not_loaded", "refusal code: " .. tostring(code))
+end
+
+T["v24: player_appearance on an older host raises"] = function(assert_)
+  _G.bwu = fake_bwu.new()
+  _G.bwu.player_appearance = nil
+  local ok, err = pcall(bot.Game.player_appearance, bot.Game.attach(), 1)
+  assert_(not ok and tostring(err):find("needs wire v24", 1, true), "clear error: " .. tostring(err))
 end
 
 return T
