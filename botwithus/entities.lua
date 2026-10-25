@@ -27,6 +27,29 @@ function Query:of_type(type_id)
   return self:filter(function(e) return e.type_id == type_id end)
 end
 
+-- U+00A0 (no-break space) in UTF-8. The client turns cp1252 0xA0 into it, so a player name
+-- can carry one where the player typed a space.
+local NO_BREAK_SPACE = "\xC2\xA0"
+
+-- A player name in the form names are compared in: every U+00A0 becomes a plain space.
+-- Display the raw name; compare this.
+function Query.normalize_name(name)
+  return (name:gsub(NO_BREAK_SPACE, " "))
+end
+
+-- Whether two player names are the same name. An empty (or missing) name never equals
+-- anything, itself included: "" means the client has not decoded that name yet.
+function Query.names_equal(a, b)
+  if type(a) ~= "string" or type(b) ~= "string" or a == "" or b == "" then return false end
+  return Query.normalize_name(a) == Query.normalize_name(b)
+end
+
+-- Rows whose name is `name` (see names_equal): an undecoded name never matches, and an
+-- empty `name` matches nothing.
+function Query:named(name)
+  return self:filter(function(e) return Query.names_equal(e.name, name) end)
+end
+
 function Query:within(tile, radius)
   tile = Tile.from(tile)
   return self:filter(function(e) return tile:distance(e.tile) <= radius end)
@@ -79,4 +102,6 @@ function Entities.objects(game)
 end
 
 Entities.Query = Query
+Entities.normalize_name = Query.normalize_name
+Entities.names_equal = Query.names_equal
 return Entities

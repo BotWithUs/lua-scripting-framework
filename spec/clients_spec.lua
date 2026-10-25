@@ -27,9 +27,9 @@ end
 
 -- Surface ----------------------------------------------------------------------------------
 
-T["clients: the surface keeps ABI 2 and adds cm surface 1"] = function(assert_)
+T["clients: the surface is ABI 3 (wire v24) and adds cm surface 1"] = function(assert_)
   local b = setup()
-  assert_(b.ABI_VERSION == 2, "ABI_VERSION stays 2")
+  assert_(b.ABI_VERSION == 3, "ABI_VERSION is 3 since wire v24")
   assert_(b.CM_SURFACE_VERSION == 1, "cm surface is version 1")
 end
 

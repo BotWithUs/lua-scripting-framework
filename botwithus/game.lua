@@ -23,7 +23,7 @@ Game.__index = Game
 
 -- The agent snapshot protocol this framework is written for. It moves in lockstep with
 -- native-scripting-host's BWU_PROTOCOL_VERSION (and NXTLibrary's kProtocolVersion).
-Game.PROTOCOL_VERSION = 23
+Game.PROTOCOL_VERSION = 24
 
 -- Refuse a host built for another protocol before attaching: the surface's tables would
 -- not be the shapes this framework reads.
@@ -116,20 +116,60 @@ local function with_facing(row)
   return row
 end
 
+-- The local player. Wire v24 adds:
+--   run_energy  0..100 as the run orb shows it, or -1 when unknown (out of the world, or
+--               unreadable on this client channel; the surface never passes the wire's
+--               out-of-world 0 through as a real energy)
+--   run_weight  kg as the client holds it, -1 when unknown. NOT independently verified by
+--               the producer: one live check could not tell the offset from a wrong one.
 function Game:self()
   return with_facing(surface().self(host(self)))
 end
 
+-- NPC rows. type_id is the BASE id the server sent. Wire v24 adds:
+--   active_type_id  the morph-resolved type: the one the client names, shows options for and
+--                   takes the combat level from, so look a name up by this id. == type_id
+--                   for an NPC with no morph; -1 when the morph resolves to nothing (the NPC
+--                   is hidden). It is never replaced by type_id.
+--   combat_level    the per-instance combat level the client shows
 function Game:npcs()
   local raw = surface().npcs(host(self))
   for _, n in ipairs(raw) do with_facing(n) end
   return raw
 end
 
+-- Player rows. Wire v24 adds:
+--   name            the display name exactly as the client holds it (at most 15 UTF-8
+--                   bytes). "" until the client has decoded that player's appearance, which
+--                   is normal for a player who just came into view. It can contain U+00A0
+--                   (no-break space; the client makes it from cp1252 0xA0): compare names with
+--                   botwithus.entities.names_equal or the query's :named(), never ==.
+--   name_truncated  true when name is a prefix of a longer client name
 function Game:players()
   local raw = surface().players(host(self))
   for _, p in ipairs(raw) do with_facing(p) end
   return raw
+end
+
+-- The applied appearance of the loaded player at `server_index` (wire v24 RPC
+-- get_player_appearance):
+--   render_id         equals that player's snapshot stance id
+--   npc_transform_id  -1 when the player is not transformed
+--   gender            INFERRED (bit 0 of the appearance flags), raw: not 0 or 1 = a misread
+--   slots             { {kit=, item=}, ... } in the CLIENT's order, NOT wearpos (a worn
+--                     shortbow, wearpos 3, is slot 15 on client 951-1): match worn items by
+--                     item id, never by index. Each slot carries one of kit / item, the
+--                     other is -1. Unrendered items (ammo) are absent.
+--   colours           colour indices 0..255 (10 on 951-1; may be empty)
+-- Returns the table, or nil and the agent's code when it refuses: not_in_game, no_player,
+-- appearance_not_loaded (normal for a player who just came into view),
+-- bad_appearance_record, unsupported_on_client_channel, game_thread_timeout.
+function Game:player_appearance(server_index)
+  local b = surface()
+  if type(b.player_appearance) ~= "function" then
+    error("botwithus: this native host has no player_appearance (needs wire v24)", 2)
+  end
+  return b.player_appearance(host(self), server_index)
 end
 
 -- Location flag bits, mirroring BWU_LOC_FLAG_* on the native surface.
