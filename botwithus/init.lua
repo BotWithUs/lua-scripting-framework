@@ -26,10 +26,12 @@ M.walk     = require("botwithus.walk")
 local Script = require("botwithus.script")
 M.run = Script.run
 
--- Sugar: bot.npcs(game) / bot.players(game) / bot.objects(game) -> a fluent query.
+-- Sugar: bot.npcs(game) / bot.players(game) / bot.objects(game) / bot.hint_arrows(game)
+-- -> a fluent query.
 M.npcs    = M.Entities.npcs
 M.players = M.Entities.players
 M.objects = M.Entities.objects
+M.hint_arrows = M.Entities.hint_arrows
 
 -- The agent protocol this framework is written for; Game.attach refuses any other.
 M.PROTOCOL_VERSION = M.Game.PROTOCOL_VERSION

@@ -50,9 +50,10 @@ function Query:named(name)
   return self:filter(function(e) return Query.names_equal(e.name, name) end)
 end
 
+-- A row with no tile (a hint arrow on an entity) is within no distance of anything.
 function Query:within(tile, radius)
   tile = Tile.from(tile)
-  return self:filter(function(e) return tile:distance(e.tile) <= radius end)
+  return self:filter(function(e) return e.tile ~= nil and tile:distance(e.tile) <= radius end)
 end
 
 function Query:where(fn) return self:filter(fn) end
@@ -73,12 +74,13 @@ end
 function Query:count() return #self:all() end
 function Query:first() return self:all()[1] end
 
--- Terminal: the match nearest to `origin` (a Tile or entity), or nil.
+-- Terminal: the match nearest to `origin` (a Tile or entity), or nil. Rows with no tile are
+-- skipped.
 function Query:nearest(origin)
   origin = Tile.from(origin)
   local best, bestd = nil, math.huge
   for _, e in ipairs(self:all()) do
-    local d = origin:distance(e.tile)
+    local d = e.tile and origin:distance(e.tile) or math.huge
     if d < bestd then best, bestd = e, d end
   end
   return best, bestd
@@ -99,6 +101,13 @@ end
 -- Visible scene objects over a Game facade; :of_type() matches the loc id the server sent.
 function Entities.objects(game)
   return new_query(function() return game:objects() end)
+end
+
+-- Hint arrows over a Game facade; :of_type() matches the arrow type. A refusal (out of the
+-- world, or a client channel without arrows) reads as no arrows, and a query's rows do not
+-- carry the list's `truncated` field: call game:hint_arrows() for the code or the flag.
+function Entities.hint_arrows(game)
+  return new_query(function() return game:hint_arrows() or {} end)
 end
 
 Entities.Query = Query

@@ -7,6 +7,10 @@
 local M = {}
 
 -- Build a fresh fake and return it (does not install it globally).
+local function copy_tile_or_nil(t)
+  return t and { x = t.x, y = t.y, plane = t.plane } or nil
+end
+
 function M.new(opts)
   opts = opts or {}
   local state = {
@@ -15,7 +19,8 @@ function M.new(opts)
     seq    = 5000000,
     self_  = opts.self_ or { valid = true, tile = { x = 3200, y = 3200, plane = 0 },
                              server_index = 1000, combat_level = 126, health = 990, max_health = 990,
-                             orientation = 4096, run_energy = 73, run_weight = 12 },
+                             orientation = 4096, run_energy = 73, run_weight = 12,
+                             server_tile = { x = 3203, y = 3200, plane = 0 } },   -- walking east
     npcs_  = opts.npcs_ or {
       { server_index = 55, type_id = 1234, tile = { x = 3201, y = 3201, plane = 0 }, health_ratio = 255,
         orientation = 12288, active_type_id = 1234, combat_level = 12 },
@@ -26,11 +31,14 @@ function M.new(opts)
     },
     players_ = opts.players_ or {
       { server_index = 1000, tile = { x = 3200, y = 3200, plane = 0 }, animation_id = -1, combat_level = 126,
-        orientation = 4096, name = "Me", name_truncated = false },
+        orientation = 4096, name = "Me", name_truncated = false,
+        server_tile = { x = 3203, y = 3200, plane = 0 } },
       { server_index = 1001, tile = { x = 3210, y = 3200, plane = 0 }, animation_id = 808, combat_level = 90,
-        orientation = 0, name = "Sir\xC2\xA0Test", name_truncated = false },  -- U+00A0, raw
+        orientation = 0, name = "Sir\xC2\xA0Test", name_truncated = false,    -- U+00A0, raw
+        server_tile = { x = 3210, y = 3200, plane = 0 } },
       { server_index = 1002, tile = { x = 3220, y = 3200, plane = 0 }, animation_id = -1, combat_level = 3,
-        orientation = -1, name = "", name_truncated = false },             -- not decoded yet
+        orientation = -1, name = "", name_truncated = false,               -- not decoded yet
+        server_tile = { x = -1, y = -1, plane = -1 } },                    -- unreadable
     },
     -- flags: 0x1 hidden, 0x2 combined section, 0x4 deleted (BWU_LOC_FLAG_*)
     locs_  = opts.locs_ or {
@@ -60,7 +68,7 @@ function M.new(opts)
     var_calls = {},
     defaults_status = opts.defaults_status or 1,
   }
-  local bwu = { PROTOCOL_VERSION = opts.protocol_version or 24, ABI_VERSION = 3, MAX_ACTION_BATCH = 128, _state = state,
+  local bwu = { PROTOCOL_VERSION = opts.protocol_version or 25, ABI_VERSION = 4, MAX_ACTION_BATCH = 128, _state = state,
                 -- BWU_VARP_* / BWU_VAR_KIND_* as native-scripting-host exports them
                 VARP_UNAVAILABLE = 0, VARP_DEFAULT_NOT_SET_CLIENTSIDE = 1, VARP_SET = 2,
                 VARP_NO_SUCH_VARP = 3, VAR_KIND_UNKNOWN = -1, VAR_KIND_INT = 0, VAR_KIND_LONG = 1,
@@ -85,7 +93,8 @@ function M.new(opts)
     return { valid = s.valid, tile = { x = s.tile.x, y = s.tile.y, plane = s.tile.plane },
              server_index = s.server_index, combat_level = s.combat_level,
              health = s.health, max_health = s.max_health, orientation = s.orientation,
-             run_energy = s.run_energy, run_weight = s.run_weight }
+             run_energy = s.run_energy, run_weight = s.run_weight,
+             server_tile = copy_tile_or_nil(s.server_tile) }
   end
   function bwu.npcs(_)
     local out = {}
@@ -103,7 +112,8 @@ function M.new(opts)
     for i, p in ipairs(state.players_) do
       out[i] = { server_index = p.server_index, tile = copy_tile(p.tile),
                  animation_id = p.animation_id, combat_level = p.combat_level,
-                 orientation = p.orientation, name = p.name, name_truncated = p.name_truncated }
+                 orientation = p.orientation, name = p.name, name_truncated = p.name_truncated,
+                 server_tile = copy_tile_or_nil(p.server_tile) }
     end
     return out
   end
@@ -117,6 +127,32 @@ function M.new(opts)
     if a == nil then return nil, "no_player" end
     if type(a) == "string" then return nil, a end
     return a
+  end
+  -- The v25 entity reads. opts.overhead_texts and opts.headbars map "<kind>:<index>" -> reply
+  -- table, or -> a string code the agent refuses with; an unlisted target is not_found.
+  -- opts.hint_arrows is the reply list, or a string code.
+  state.overhead_texts = opts.overhead_texts or {}
+  state.headbars = opts.headbars or {}
+  state.hint_arrows = opts.hint_arrows or { truncated = false }
+  state.entity_calls = {}
+  local function entity_reply(replies, kind, index)
+    state.entity_calls[#state.entity_calls + 1] = { kind = kind, index = index }
+    local reply = replies[kind .. ":" .. tostring(index)]
+    if reply == nil then return nil, "not_found" end
+    if type(reply) == "string" then return nil, reply end
+    return reply
+  end
+  function bwu.overhead_text(_, kind, index) return entity_reply(state.overhead_texts, kind, index) end
+  function bwu.headbars(_, kind, index) return entity_reply(state.headbars, kind, index) end
+  function bwu.hint_arrows(_)
+    if type(state.hint_arrows) == "string" then return nil, state.hint_arrows end
+    local out = { truncated = state.hint_arrows.truncated }
+    for i, a in ipairs(state.hint_arrows) do
+      local row = {}
+      for k, v in pairs(a) do row[k] = v end
+      out[i] = row
+    end
+    return out
   end
   function bwu.locations(_)
     local out = {}

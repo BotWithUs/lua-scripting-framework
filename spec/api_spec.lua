@@ -16,14 +16,14 @@ end
 
 T["protocol version comes from the surface"] = function(assert_)
   _G.bwu = fake_bwu.new()
-  assert_(bot.protocol_version() == 24, "surface reports v24")
+  assert_(bot.protocol_version() == 25, "surface reports v25")
 end
 
 T["attach refuses a host built for another protocol"] = function(assert_)
   _G.bwu = fake_bwu.new({ protocol_version = 23 })
   local ok, err = pcall(bot.Game.attach)
   assert_(not ok, "attach to a v23 surface must fail")
-  assert_(tostring(err):find("built for agent protocol v24", 1, true), "names the framework's protocol: " .. tostring(err))
+  assert_(tostring(err):find("built for agent protocol v25", 1, true), "names the framework's protocol: " .. tostring(err))
   assert_(tostring(err):find("speaks v23", 1, true), "names the host's protocol: " .. tostring(err))
   assert_(#_G.bwu._state.attaches == 0, "the native attach is never reached")
 end
@@ -36,7 +36,7 @@ T["attach refuses a surface with no protocol version"] = function(assert_)
 end
 
 T["framework protocol matches the host lockstep value"] = function(assert_)
-  assert_(bot.PROTOCOL_VERSION == 24, "framework is written for v24")
+  assert_(bot.PROTOCOL_VERSION == 25, "framework is written for v25")
   _G.bwu = fake_bwu.new()
   assert_(bot.Game.attach() ~= nil, "a v24 surface attaches")
 end
@@ -416,6 +416,104 @@ T["v24: player_appearance on an older host raises"] = function(assert_)
   _G.bwu.player_appearance = nil
   local ok, err = pcall(bot.Game.player_appearance, bot.Game.attach(), 1)
   assert_(not ok and tostring(err):find("needs wire v24", 1, true), "clear error: " .. tostring(err))
+end
+
+T["v25: self and player rows carry the server tile as a Tile, beside the visual tile"] = function(assert_)
+  _G.bwu = fake_bwu.new()
+  local g = bot.Game.attach()
+  local me = g:self()
+  assert_(me.tile.x == 3200 and me.server_tile.x == 3203, "server tile leads the visual tile")
+  assert_(getmetatable(me.server_tile) == bot.Tile, "self server_tile is a Tile")
+  local rows = g:players()
+  assert_(rows[1].server_tile.x == 3203 and getmetatable(rows[1].server_tile) == bot.Tile, "player row")
+  assert_(rows[3].server_tile.x == -1 and rows[3].server_tile.plane == -1, "unknown stays -1")
+  assert_(g:npcs()[1].server_tile == nil, "npc rows do not carry it")
+end
+
+T["v25: an unknown server tile on self stays -1"] = function(assert_)
+  _G.bwu = fake_bwu.new({ self_ = { valid = false, tile = { x = 0, y = 0, plane = 0 },
+    server_index = -1, combat_level = 0, health = 0, max_health = 0, orientation = -1,
+    run_energy = -1, run_weight = -1, server_tile = { x = -1, y = -1, plane = -1 } } })
+  local st = bot.Game.attach():self().server_tile
+  assert_(st.x == -1 and st.y == -1 and st.plane == -1, "out of world reads -1, not 0")
+end
+
+T["v25: overhead_text returns the reply, an empty table when silent, or nil, code"] = function(assert_)
+  local reply = { text = "Cheep!", expires_in_ms = 1800, truncated = false }
+  _G.bwu = fake_bwu.new({ overhead_texts = { ["npc:30"] = reply, ["npc:31"] = {},
+                                             ["player:7"] = "channel_unsupported" } })
+  local g = bot.Game.attach()
+  assert_(g:overhead_text("npc", 30) == reply, "the surface's table is returned")
+  local call = _G.bwu._state.entity_calls[1]
+  assert_(call.kind == "npc" and call.index == 30, "kind and index forwarded")
+  local silent = g:overhead_text("npc", 31)
+  assert_(type(silent) == "table" and silent.text == nil, "silent is a table with no text")
+  local none, code = g:overhead_text("player", 7)
+  assert_(none == nil and code == "channel_unsupported", "beta channel: " .. tostring(code))
+  local missing, why = g:overhead_text("npc", 99)
+  assert_(missing == nil and why == "not_found", "refusal code: " .. tostring(why))
+end
+
+T["v25: headbars returns the list and its truncated flag, or nil, code"] = function(assert_)
+  local bars = { truncated = true,
+    { headbar_id = 0, value = 128, value_start = 200, start_cycle = 5000, duration = 30 } }
+  _G.bwu = fake_bwu.new({ headbars = { ["npc:30"] = bars, ["npc:31"] = { truncated = false },
+                                       ["player:7"] = "channel_unsupported" } })
+  local g = bot.Game.attach()
+  local got = g:headbars("npc", 30)
+  assert_(got[1].value == 128 and got[1].value_start == 200 and got[1].value_end == nil, "row fields")
+  assert_(got.truncated == true, "the agent's truncated passes through")
+  assert_(#g:headbars("npc", 31) == 0, "no bars is an empty list")
+  local none, code = g:headbars("player", 7)
+  assert_(none == nil and code == "channel_unsupported", "beta channel: " .. tostring(code))
+end
+
+local function arrow_fixture()
+  return { truncated = true,
+    { source = "tree", slot = -1, type = 2, type_name = "tile_centre", target_type = "tile",
+      target_index = -1, plane = 0, tile_x = 3201, tile_y = 3200, range_tiles = 12 },
+    { source = "slot", slot = 3, type = 1, type_name = "npc", target_type = "npc",
+      target_index = 55, plane = 0, tile_x = -1, tile_y = -1, range_tiles = 5 } }
+end
+
+T["v25: hint_arrows adds a Tile for tile arrows only, and keeps the truncated flag"] = function(assert_)
+  _G.bwu = fake_bwu.new({ hint_arrows = arrow_fixture() })
+  local rows = bot.Game.attach():hint_arrows()
+  assert_(#rows == 2 and rows.truncated == true, "two rows and the flag")
+  assert_(getmetatable(rows[1].tile) == bot.Tile and rows[1].tile.x == 3201, "a tile arrow has a Tile")
+  assert_(rows[2].tile == nil and rows[2].target_index == 55, "an npc arrow has its index, no Tile")
+  assert_(rows[1].type_id == 2, "type_id aliases type")
+end
+
+T["v25: hint_arrows refusal is nil, code"] = function(assert_)
+  _G.bwu = fake_bwu.new({ hint_arrows = "channel_unsupported" })
+  local rows, code = bot.Game.attach():hint_arrows()
+  assert_(rows == nil and code == "channel_unsupported", "beta channel: " .. tostring(code))
+end
+
+T["v25: the hint_arrows query filters, and skips arrows with no tile"] = function(assert_)
+  _G.bwu = fake_bwu.new({ hint_arrows = arrow_fixture() })
+  local g = bot.Game.attach()
+  assert_(bot.hint_arrows(g):count() == 2, "both arrows")
+  assert_(bot.hint_arrows(g):of_type(1):first().target_index == 55, ":of_type matches the arrow type")
+  local here = bot.Tile.new(3200, 3200, 0)
+  assert_(bot.hint_arrows(g):within(here, 50):count() == 1, ":within skips the arrow with no tile")
+  assert_(bot.hint_arrows(g):nearest(here).type == 2, ":nearest skips the arrow with no tile")
+end
+
+T["v25: a refused hint_arrows query reads as no arrows"] = function(assert_)
+  _G.bwu = fake_bwu.new({ hint_arrows = "not_in_world" })
+  assert_(bot.hint_arrows(bot.Game.attach()):count() == 0, "empty, no crash")
+end
+
+T["v25: entity reads on an older host raise"] = function(assert_)
+  for _, name in ipairs({ "overhead_text", "headbars", "hint_arrows" }) do
+    _G.bwu = fake_bwu.new()
+    local g = bot.Game.attach()
+    _G.bwu[name] = nil
+    local ok, err = pcall(g[name], g, "npc", 1)
+    assert_(not ok and tostring(err):find("needs wire v25", 1, true), name .. ": " .. tostring(err))
+  end
 end
 
 return T
