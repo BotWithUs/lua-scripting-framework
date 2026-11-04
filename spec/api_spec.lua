@@ -38,7 +38,7 @@ end
 T["framework protocol matches the host lockstep value"] = function(assert_)
   assert_(bot.PROTOCOL_VERSION == 25, "framework is written for v25")
   _G.bwu = fake_bwu.new()
-  assert_(bot.Game.attach() ~= nil, "a v24 surface attaches")
+  assert_(bot.Game.attach() ~= nil, "a v25 surface attaches")
 end
 
 T["game facade decodes self into a Tile"] = function(assert_)
@@ -474,6 +474,31 @@ local function arrow_fixture()
       target_index = -1, plane = 0, tile_x = 3201, tile_y = 3200, range_tiles = 12 },
     { source = "slot", slot = 3, type = 1, type_name = "npc", target_type = "npc",
       target_index = 55, plane = 0, tile_x = -1, tile_y = -1, range_tiles = 5 } }
+end
+
+-- The agent reads the stored coordinate for every arrow type, so an entity arrow can carry one.
+local function entity_arrow_with_coordinate(kind, type_id)
+  return { source = "slot", slot = 1, type = type_id, type_name = kind, target_type = kind,
+           target_index = 55, plane = 0, tile_x = 3201, tile_y = 3200, range_tiles = 5 }
+end
+
+T["v25: an entity arrow with a coordinate gets no Tile, and queries do not rank it"] = function(assert_)
+  for kind, type_id in pairs({ npc = 1, player = 10 }) do
+    _G.bwu = fake_bwu.new({ hint_arrows = { truncated = false, entity_arrow_with_coordinate(kind, type_id) } })
+    local g = bot.Game.attach()
+    local row = g:hint_arrows()[1]
+    assert_(row.tile == nil and row.tile_x == 3201, kind .. ": raw coordinate kept, no Tile")
+    local here = bot.Tile.new(3200, 3200, 0)
+    assert_(bot.hint_arrows(g):within(here, 50):count() == 0, kind .. ": not within")
+    assert_(bot.hint_arrows(g):nearest(here) == nil, kind .. ": not nearest")
+  end
+end
+
+T["v25: hint_arrows keeps the agent's truncated flag, either way"] = function(assert_)
+  for _, flag in ipairs({ true, false }) do
+    _G.bwu = fake_bwu.new({ hint_arrows = { truncated = flag } })
+    assert_(bot.Game.attach():hint_arrows().truncated == flag, "truncated " .. tostring(flag))
+  end
 end
 
 T["v25: hint_arrows adds a Tile for tile arrows only, and keeps the truncated flag"] = function(assert_)

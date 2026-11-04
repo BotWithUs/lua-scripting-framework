@@ -103,9 +103,11 @@ function Entities.objects(game)
   return new_query(function() return game:objects() end)
 end
 
--- Hint arrows over a Game facade; :of_type() matches the arrow type. A refusal (out of the
--- world, or a client channel without arrows) reads as no arrows, and a query's rows do not
--- carry the list's `truncated` field: call game:hint_arrows() for the code or the flag.
+-- Hint arrows over a Game facade; :of_type() matches the arrow type. Any refusal (out of the
+-- world, a client channel without arrows) reads as no arrows, and so does a timeout
+-- (game_thread_timeout, rpc_timeout), so a polling script cannot tell "none" from "did not
+-- answer" here. A query's rows do not carry the list's `truncated` field either: call
+-- game:hint_arrows() for the code or the flag.
 function Entities.hint_arrows(game)
   return new_query(function() return game:hint_arrows() or {} end)
 end

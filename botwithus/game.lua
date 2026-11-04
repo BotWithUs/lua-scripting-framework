@@ -198,7 +198,9 @@ end
 --   {}                                        when the entity is there and silent
 --   nil, code                                 when the agent refuses: not_in_world, not_found,
 --                                             channel_unsupported (normal on the beta client
---                                             channel), game_thread_timeout
+--                                             channel), game_thread_timeout; or
+--                                             rpc_timeout, the host's own code when the agent
+--                                             did not answer at all
 function Game:overhead_text(kind, index)
   return entity_read("overhead_text")(host(self), kind, index)
 end
@@ -224,19 +226,21 @@ end
 --                 type_name is the same as a name, type_id an alias for the query's :of_type()
 --   target_type   "npc", "player", "tile" or "unknown"
 --   target_index  the server index for npc and player arrows, otherwise -1
---   tile_x, tile_y, plane  the arrow's position. tile_x / tile_y are -1 when it is not a
---                 coordinate or reads tile (0,0), and plane is -1 when outside 0..3
---   tile          the same as a Tile, or nil when any of the three is -1
+--   tile_x, tile_y, plane  the arrow's stored position. tile_x / tile_y are -1 when it is not
+--                 a coordinate or reads tile (0,0), and plane is -1 when outside 0..3. An npc or
+--                 player arrow can carry one too: use target_index for those, not this.
+--   tile          a Tile for a tile arrow (target_type "tile") with a usable position, otherwise
+--                 nil. An arrow on an entity never has one, so queries never rank it by position.
 --   range_tiles   the arrow's view range
 -- The list's `truncated` field is true when it is incomplete, as headbars. Returns nil, code on
 -- refusal: not_in_world, channel_unsupported (normal on the beta client channel),
--- game_thread_timeout.
+-- game_thread_timeout, or the host's rpc_timeout.
 function Game:hint_arrows()
   local rows, code = entity_read("hint_arrows")(host(self))
   if not rows then return nil, code end
   for _, arrow in ipairs(rows) do
     arrow.type_id = arrow.type
-    if arrow.tile_x >= 0 and arrow.tile_y >= 0 and arrow.plane >= 0 then
+    if arrow.target_type == "tile" and arrow.tile_x >= 0 and arrow.tile_y >= 0 and arrow.plane >= 0 then
       arrow.tile = Tile.new(arrow.tile_x, arrow.tile_y, arrow.plane)
     end
   end
