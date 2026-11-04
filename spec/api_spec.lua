@@ -482,6 +482,10 @@ T["v25: hint_arrows adds a Tile for tile arrows only, and keeps the truncated fl
   assert_(#rows == 2 and rows.truncated == true, "two rows and the flag")
   assert_(getmetatable(rows[1].tile) == bot.Tile and rows[1].tile.x == 3201, "a tile arrow has a Tile")
   assert_(rows[2].tile == nil and rows[2].target_index == 55, "an npc arrow has its index, no Tile")
+  _G.bwu = fake_bwu.new({ hint_arrows = { truncated = false,
+    { source = "tree", slot = -1, type = 2, type_name = "tile_centre", target_type = "tile",
+      target_index = -1, plane = -1, tile_x = 3201, tile_y = 3200, range_tiles = 12 } } })
+  assert_(bot.Game.attach():hint_arrows()[1].tile == nil, "a plane outside 0..3 has no Tile")
   assert_(rows[1].type_id == 2, "type_id aliases type")
 end
 

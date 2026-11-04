@@ -193,7 +193,8 @@ end
 -- The text above an entity (wire v25 RPC get_overhead_text). `kind` is "npc" or "player";
 -- anything else raises. Returns:
 --   { text =, expires_in_ms =, truncated = }  while the entity is speaking. text is UTF-8;
---                                             truncated is true when the agent cut it
+--                                             truncated is true when it was longer than
+--                                             the 255 bytes kept
 --   {}                                        when the entity is there and silent
 --   nil, code                                 when the agent refuses: not_in_world, not_found,
 --                                             channel_unsupported (normal on the beta client
@@ -209,8 +210,9 @@ end
 --   value_start  where the interpolation began, 0..255
 --   start_cycle, duration   in game_cycle units (the ~20ms clock, not server_tick).
 --                start_cycle can lie slightly ahead of game_cycle.
--- The list's `truncated` field is true when the agent cut it at its own cap. An entity with no
--- bars is an empty list. Returns nil, code on refusal, as overhead_text.
+-- The list's `truncated` field is true when it is incomplete: the agent's walk stopped with
+-- entries unread, so treat the rows as a partial list. An entity with no bars is an empty list.
+-- Returns nil, code on refusal, as overhead_text.
 function Game:headbars(kind, index)
   return entity_read("headbars")(host(self), kind, index)
 end
@@ -222,18 +224,19 @@ end
 --                 type_name is the same as a name, type_id an alias for the query's :of_type()
 --   target_type   "npc", "player", "tile" or "unknown"
 --   target_index  the server index for npc and player arrows, otherwise -1
---   tile_x, tile_y, plane  the arrow's position, -1 tile when it is not a coordinate
---   tile          the same as a Tile, or nil when it is not a coordinate
+--   tile_x, tile_y, plane  the arrow's position. tile_x / tile_y are -1 when it is not a
+--                 coordinate or reads tile (0,0), and plane is -1 when outside 0..3
+--   tile          the same as a Tile, or nil when any of the three is -1
 --   range_tiles   the arrow's view range
--- The list's `truncated` field is true when the agent cut it at its own cap. Returns nil, code
--- on refusal: not_in_world, channel_unsupported (normal on the beta client channel),
+-- The list's `truncated` field is true when it is incomplete, as headbars. Returns nil, code on
+-- refusal: not_in_world, channel_unsupported (normal on the beta client channel),
 -- game_thread_timeout.
 function Game:hint_arrows()
   local rows, code = entity_read("hint_arrows")(host(self))
   if not rows then return nil, code end
   for _, arrow in ipairs(rows) do
     arrow.type_id = arrow.type
-    if arrow.tile_x >= 0 and arrow.tile_y >= 0 then
+    if arrow.tile_x >= 0 and arrow.tile_y >= 0 and arrow.plane >= 0 then
       arrow.tile = Tile.new(arrow.tile_x, arrow.tile_y, arrow.plane)
     end
   end
