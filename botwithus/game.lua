@@ -23,7 +23,7 @@ Game.__index = Game
 
 -- The agent snapshot protocol this framework is written for. It moves in lockstep with
 -- native-scripting-host's BWU_PROTOCOL_VERSION (and NXTLibrary's kProtocolVersion).
-Game.PROTOCOL_VERSION = 24
+Game.PROTOCOL_VERSION = 25
 
 -- Refuse a host built for another protocol before attaching: the surface's tables would
 -- not be the shapes this framework reads.
@@ -109,6 +109,7 @@ function Game:server_tick() return self:clocks().server_tick end
 -- orientation.is_same_facing, never ==: the client can read an angle back one unit short.
 local function with_facing(row)
   row.tile = Tile.from(row.tile)
+  if row.server_tile then row.server_tile = Tile.from(row.server_tile) end
   local raw = row.orientation or Orientation.UNKNOWN_RAW
   row.orientation = raw
   row.facing = Orientation.compass(raw)
@@ -122,6 +123,12 @@ end
 --               out-of-world 0 through as a real energy)
 --   run_weight  kg as the client holds it, -1 when unknown. NOT independently verified by
 --               the producer: one live check could not tell the offset from a wrong one.
+--   server_tile (wire v25) where the server has told the client you are going: the newest
+--               walk-queue step, or your logical position while the queue is empty. `tile` is
+--               where you are drawn. It leads `tile` during a walk and both end on the same
+--               tile; do not assume they are equal when idle, forced movement moves it first.
+--               x, y and plane are -1 when unknown (out of the world, or unreadable, which is
+--               normal on the beta client channel).
 function Game:self()
   return with_facing(surface().self(host(self)))
 end
@@ -145,6 +152,7 @@ end
 --                   (no-break space; the client makes it from cp1252 0xA0): compare names with
 --                   botwithus.entities.names_equal or the query's :named(), never ==.
 --   name_truncated  true when name is a prefix of a longer client name
+-- Wire v25 adds server_tile, as on Game:self(). NPC rows do not carry it.
 function Game:players()
   local raw = surface().players(host(self))
   for _, p in ipairs(raw) do with_facing(p) end
@@ -170,6 +178,73 @@ function Game:player_appearance(server_index)
     error("botwithus: this native host has no player_appearance (needs wire v24)", 2)
   end
   return b.player_appearance(host(self), server_index)
+end
+
+-- The v25 entity reads, on a host new enough to have them. `level` blames the script's call.
+local function entity_read(name)
+  local b = surface()
+  local read = b[name]
+  if type(read) ~= "function" then
+    error("botwithus: this native host has no " .. name .. " (needs wire v25)", 3)
+  end
+  return read
+end
+
+-- The text above an entity (wire v25 RPC get_overhead_text). `kind` is "npc" or "player";
+-- anything else raises. Returns:
+--   { text =, expires_in_ms =, truncated = }  while the entity is speaking. text is UTF-8;
+--                                             truncated is true when it was longer than
+--                                             the 255 bytes kept
+--   {}                                        when the entity is there and silent
+--   nil, code                                 when the agent refuses: not_in_world, not_found,
+--                                             channel_unsupported (normal on the beta client
+--                                             channel), game_thread_timeout; or
+--                                             rpc_timeout, the host's own code when the agent
+--                                             did not answer at all
+function Game:overhead_text(kind, index)
+  return entity_read("overhead_text")(host(self), kind, index)
+end
+
+-- Every headbar entry on an entity (wire v25 RPC get_headbars), slot by slot, with no liveness
+-- filter. `kind` as overhead_text. Each row:
+--   headbar_id   gameval HEADBAR id: 0 HEALTH_DEFAULT, 7 ADRENALINE_DEFAULT; -1 has no type
+--   value        the CURRENT value, 0..255. There is no value_end: this is it.
+--   value_start  where the interpolation began, 0..255
+--   start_cycle, duration   in game_cycle units (the ~20ms clock, not server_tick).
+--                start_cycle can lie slightly ahead of game_cycle.
+-- The list's `truncated` field is true when it is incomplete: the agent's walk stopped with
+-- entries unread, so treat the rows as a partial list. An entity with no bars is an empty list.
+-- Returns nil, code on refusal, as overhead_text.
+function Game:headbars(kind, index)
+  return entity_read("headbars")(host(self), kind, index)
+end
+
+-- Every hint arrow (wire v25 RPC query_hint_arrows), in the manager's slots and its owner tree.
+-- Each row:
+--   source        "slot" or "tree"; slot is 0..7 for a slot arrow, -1 for a tree arrow
+--   type          1 npc, 2 tile centre, 3 west, 4 east, 5 south, 6 north, 7 corner, 10 player.
+--                 type_name is the same as a name, type_id an alias for the query's :of_type()
+--   target_type   "npc", "player", "tile" or "unknown"
+--   target_index  the server index for npc and player arrows, otherwise -1
+--   tile_x, tile_y, plane  the arrow's stored position. tile_x / tile_y are -1 when it is not
+--                 a coordinate or reads tile (0,0), and plane is -1 when outside 0..3. An npc or
+--                 player arrow can carry one too: use target_index for those, not this.
+--   tile          a Tile for a tile arrow (target_type "tile") with a usable position, otherwise
+--                 nil. An arrow on an entity never has one, so queries never rank it by position.
+--   range_tiles   the arrow's view range
+-- The list's `truncated` field is true when it is incomplete, as headbars. Returns nil, code on
+-- refusal: not_in_world, channel_unsupported (normal on the beta client channel),
+-- game_thread_timeout, or the host's rpc_timeout.
+function Game:hint_arrows()
+  local rows, code = entity_read("hint_arrows")(host(self))
+  if not rows then return nil, code end
+  for _, arrow in ipairs(rows) do
+    arrow.type_id = arrow.type
+    if arrow.target_type == "tile" and arrow.tile_x >= 0 and arrow.tile_y >= 0 and arrow.plane >= 0 then
+      arrow.tile = Tile.new(arrow.tile_x, arrow.tile_y, arrow.plane)
+    end
+  end
+  return rows
 end
 
 -- Location flag bits, mirroring BWU_LOC_FLAG_* on the native surface.
