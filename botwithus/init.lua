@@ -28,6 +28,10 @@ M.walk     = require("botwithus.walk")
 local Script = require("botwithus.script")
 M.run = Script.run
 
+-- True once the GUI asked this run to stop (always false on the command line). For a
+-- self-running script, which has no ctx: check it in your own loops and finish up.
+M.stopping = require("botwithus.ctl").stopping
+
 -- Sugar: bot.npcs(game) / bot.players(game) / bot.objects(game) / bot.hint_arrows(game)
 -- -> a fluent query.
 M.npcs    = M.Entities.npcs

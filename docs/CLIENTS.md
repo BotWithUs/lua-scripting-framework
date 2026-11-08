@@ -86,7 +86,8 @@ until you read them, and handlers run only inside these calls:
 - `cm:pump(timeout_ms)` waits up to `timeout_ms` for the first event, handles everything else
   that is queued, and returns how many events it handled.
 - `cm:wait_for(pred, timeout_s)` handles events until `pred(event)` is true and returns that
-  event. After `timeout_s` it returns `nil, "timeout"`.
+  event. After `timeout_s` it returns `nil, "timeout"`. When the GUI is stopping the run, it
+  returns `nil, "stopping"` within one wait slice; so does `launch:wait_attached()`.
 
 Keep waits short. While a wait lasts, your script does nothing else.
 

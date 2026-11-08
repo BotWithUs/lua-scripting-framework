@@ -453,6 +453,122 @@ function M.with_runlog(b)
   return b
 end
 
+-- Add a stand-in for the host's run control (bwu.ctl_*) to a fake, in the shapes the native
+-- Lua binding has: ctl_describe -> config | nil, err; ctl_state -> true | nil, err;
+-- ctl_wait -> "timeout" | "stop"; ctl_stopping -> boolean; ctl_take_config -> id, cfg | nil;
+-- ctl_config_done -> nothing. A wrong argument type raises, as luaL_check* does.
+--   opts.mode              "worker" (default), "describe" or "cli"
+--   opts.stop_after_waits  set stop on the n-th ctl_wait (that wait returns "stop")
+--   opts.stopping          start with stop already set
+--   opts.refuse_after_stop ctl_state(attaching|running) after a stop returns nil, err (a
+--                          host without the stop-during-start rule), instead of a no-op
+-- b._ctl records describes, waits (their ms), dones and takes, and `states`: every state
+-- frame the worker would send, in order, including the host's own `stopping`.
+-- b._ctl.stop() plays a GUI stop: the host sets the stop flag and sends `stopping` (once).
+-- After that, ctl_state(attaching|running|stopping) is a no-op returning true.
+-- b._ctl.push(id, cfg) queues a config change.
+local Config = require("botwithus.config")
+
+local MODES = { cli = 0, worker = 1, describe = 2 }
+local PHASES = { attaching = true, running = true, stopping = true }
+local UINT32_MAX = 4294967295
+
+-- The describe checks the binding and the host make, reduced to what the specs need.
+local function check_desc(desc)
+  if type(desc) ~= "table" then error("bad argument #1 to 'ctl_describe' (table expected)", 2) end
+  if desc.self_running ~= nil and type(desc.self_running) ~= "boolean" then
+    return nil, "self_running: expected a boolean"
+  end
+  local ok, err = Config.validate_manifest(desc.manifest)
+  if ok then ok, err = Config.validate_fields(desc.config_schema) end
+  return ok, err
+end
+
+-- The legal framework-reported transitions, from the last sent phase.
+local function legal(rec, phase)
+  local last = rec.states[#rec.states]
+  if rec.stopped then return false end
+  if phase == "attaching" then return last == nil and not rec.self_running end
+  if phase == "running" then
+    return last == "attaching" or (last == nil and rec.self_running == true)
+  end
+  return false
+end
+
+function M.with_ctl(b, opts)
+  opts = opts or {}
+  local rec = { describes = {}, states = {}, waits = {}, dones = {}, takes = 0, queue = {},
+                stopping = opts.stopping or false, running = false }
+  b._ctl = rec
+  b.CTL_CLI, b.CTL_WORKER, b.CTL_DESCRIBE = MODES.cli, MODES.worker, MODES.describe
+  local mode = MODES[opts.mode or "worker"]
+  function rec.stop()
+    rec.stopping = true
+    if mode == MODES.worker and not rec.stopped then
+      rec.states[#rec.states + 1] = "stopping"
+      rec.stopped, rec.host_stopped = true, true
+    end
+  end
+  function rec.push(id, cfg) rec.queue[#rec.queue + 1] = { id = id, cfg = cfg } end
+  rec.stopping = false
+  if opts.stopping then rec.stop() end
+
+  function b.ctl_mode() return mode end
+  function b.ctl_describe(desc)
+    rec.describes[#rec.describes + 1] = desc
+    if #rec.describes > 1 then return nil, "ctl_describe: called twice" end
+    local ok, err = check_desc(desc)
+    if not ok then return nil, err end
+    rec.self_running = desc.self_running == true
+    local cfg = Config.defaults(desc.config_schema)
+    for k, v in pairs(opts.initial or {}) do cfg[k] = v end
+    return cfg
+  end
+  function b.ctl_state(phase)
+    if type(phase) ~= "string" then error("bad argument #1 to 'ctl_state' (string expected)", 2) end
+    if not PHASES[phase] then return nil, "ctl_state: unknown phase " .. phase end
+    if mode ~= MODES.worker then return true end
+    if rec.host_stopped then
+      if opts.refuse_after_stop and phase ~= "stopping" then
+        return nil, "ctl_state: illegal transition to " .. phase
+      end
+      return true   -- after the host's stopping: a no-op
+    end
+    if phase == "stopping" then
+      if not rec.stopped then rec.states[#rec.states + 1] = "stopping" end
+      rec.stopped = true
+      return true
+    end
+    if not legal(rec, phase) then return nil, "ctl_state: illegal transition to " .. phase end
+    rec.states[#rec.states + 1] = phase
+    if phase == "running" then rec.running = true end
+    return true
+  end
+  function b.ctl_wait(ms)
+    if math.type(ms) ~= "integer" or ms < 0 or ms > UINT32_MAX then
+      error("bad argument #1 to 'ctl_wait' (number has no integer representation)", 2)
+    end
+    rec.waits[#rec.waits + 1] = ms
+    if mode ~= MODES.cli and opts.stop_after_waits and #rec.waits >= opts.stop_after_waits then
+      rec.stop()
+    end
+    if mode ~= MODES.cli and rec.stopping then return "stop" end
+    return "timeout"
+  end
+  function b.ctl_stopping() return mode ~= MODES.cli and rec.stopping end
+  function b.ctl_take_config()
+    if mode ~= MODES.worker or not rec.running or #rec.queue == 0 then return nil end
+    rec.takes = rec.takes + 1
+    local change = table.remove(rec.queue, 1)
+    return change.id, change.cfg
+  end
+  function b.ctl_config_done(id, ok, message)
+    if math.type(id) ~= "integer" then error("bad argument #1 to 'ctl_config_done' (number expected)", 2) end
+    rec.dones[#rec.dones + 1] = { id = id, ok = ok and true or false, message = message }
+  end
+  return b
+end
+
 -- One record in the shape bwu.read_varps / read_varbits returns.
 function M.var_record(id, state, value, opts)
   opts = opts or {}

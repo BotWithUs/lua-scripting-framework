@@ -27,7 +27,8 @@ package.path = root .. "?.lua;" .. root .. "?/init.lua;" .. package.path
 
 local specs = { "spec.api_spec", "spec.orientation_spec", "spec.input_spec", "spec.clients_spec",
                 "spec.variables_spec", "spec.walk_spec", "spec.actions_spec", "spec.events_spec",
-                "spec.queue_break_spec", "spec.example_spec" }
+                "spec.queue_break_spec", "spec.example_spec", "spec.config_spec",
+                "spec.worker_spec" }
 
 local passed, failed = 0, 0
 local failures = {}

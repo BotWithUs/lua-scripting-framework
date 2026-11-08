@@ -3,6 +3,10 @@
 -- Run under the native host:  bwu_host --lua examples/banker.lua
 -- (needs botwithus/ on package.path; see scripts/run_example.ps1)
 --
+-- Plugin-style: the file returns its script table, so the GUI (or any loader that calls the
+-- file with arguments) gets the table without running anything. Run directly, the host calls
+-- it with no arguments, and it runs itself.
+--
 -- The point of this example is `ctx.game:walk(...)`, which drives worldwalker's blocking
 -- executor: it plans the route, walks it, re-plans as needed, and EXECUTES the transitions
 -- along the way (doors, stairs, teleports, dialogue) -- one call from the player's current
@@ -48,5 +52,8 @@ function script.on_stop(ctx)
   io.write("banker: stopped\n")
 end
 
--- max_iters bounds the demo; drop it for a real run.
-bot.run(script, { max_iters = 3 })
+if select("#", ...) == 0 then
+  bot.run(script, { max_iters = 3 })  -- bound for the demo; drop max_iters for real runs
+end
+
+return script

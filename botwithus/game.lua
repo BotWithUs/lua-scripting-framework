@@ -26,31 +26,61 @@ Game.__index = Game
 -- native-scripting-host's BWU_PROTOCOL_VERSION (and NXTLibrary's kProtocolVersion).
 Game.PROTOCOL_VERSION = 25
 
--- Refuse a host built for another protocol before attaching: the surface's tables would
--- not be the shapes this framework reads.
-local function require_protocol(b, level)
-  if b.PROTOCOL_VERSION ~= Game.PROTOCOL_VERSION then
-    error("botwithus: this framework is built for agent protocol v" .. Game.PROTOCOL_VERSION
-      .. " but the native host speaks v" .. tostring(b.PROTOCOL_VERSION)
-      .. "; update the framework and the host together", level + 1)
-  end
+-- Why a host built for another protocol is refused, or nil when it matches: the surface's
+-- tables would not be the shapes this framework reads.
+local function protocol_mismatch(b)
+  if b.PROTOCOL_VERSION == Game.PROTOCOL_VERSION then return nil end
+  return "botwithus: this framework is built for agent protocol v" .. Game.PROTOCOL_VERSION
+    .. " but the native host speaks v" .. tostring(b.PROTOCOL_VERSION)
+    .. "; update the framework and the host together"
 end
 
--- The pid Game.attach() picks when given none: the first discovered client.
+-- Refuse a host built for another protocol before attaching.
+local function require_protocol(b, level)
+  local mismatch = protocol_mismatch(b)
+  if mismatch then error(mismatch, level + 1) end
+end
+
+-- The client the GUI started this worker for (BWU_CLIENT_PID), or nil. Honoured only in a
+-- GUI worker: on the command line the variable is ignored, so a value inherited from a shell
+-- can never pick the client.
+local function worker_client_pid(b)
+  if not (b.ctl_mode and b.ctl_mode() == b.CTL_WORKER) then return nil end
+  local pid = math.tointeger(tonumber(os.getenv("BWU_CLIENT_PID") or ""))
+  if pid and pid > 0 then return pid end
+  return nil
+end
+
+-- The pid Game.attach() picks when given none: in a GUI worker the client the GUI started
+-- it for, otherwise the first discovered client.
 -- `level` is the error level to blame when there is none (default: the caller).
 function Game.attach_target(level)
-  local pid = surface().discover_pids()[1]
+  local b = surface()
+  local chosen = worker_client_pid(b)
+  if chosen then return chosen end
+  local pid = b.discover_pids()[1]
   if not pid then error("botwithus: no game client to attach to", level or 2) end
   return pid
 end
 
--- Attach to a client. With no pid, attaches to the first discovered one.
+-- Attach to a client. With no pid, attaches to the one Game.attach_target picks.
 function Game.attach(pid)
   local b = surface()
   require_protocol(b, 2)
   pid = pid or Game.attach_target(3)
   local host, err = b.attach(pid)
   if not host then error("botwithus: attach failed: " .. tostring(err), 2) end
+  return setmetatable({ _host = host, _pid = pid }, Game)
+end
+
+-- Attach to `pid` without raising: a Game, or nil, code, message. The code is "error":
+-- the native attach reports only a message.
+function Game.try_attach(pid)
+  local b = surface()
+  local mismatch = protocol_mismatch(b)
+  if mismatch then return nil, "error", mismatch end
+  local host, err = b.attach(pid)
+  if not host then return nil, "error", tostring(err) end
   return setmetatable({ _host = host, _pid = pid }, Game)
 end
 
