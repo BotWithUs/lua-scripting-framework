@@ -189,10 +189,34 @@ local function callback(script, name, ctx, ...)
   return false
 end
 
--- Apply every queued config change, in order. Returns false after an on_config_update error.
-local function apply_queued_config(b, script, ctx)
-  while true do
+-- The next config change to apply: one the loop's sleep already took, else the host's next.
+local function next_change(b, pending)
+  local change = table.remove(pending, 1)
+  if change then return change.id, change.config end
+  return b.ctl_take_config()
+end
+
+-- The wait between the loop sleep's tick polls. It ends the sleep for a stop, as every wait
+-- does, and also when the GUI queues a config change: the change is taken into `pending` and
+-- applied, in order, at the top of the next iteration. Without this, a stalled server tick
+-- (the lobby, a frozen client) holds the change until ticks resume. A change still pending
+-- at a stop stays unacked, as one never taken does. The script's own ctx:sleep_ticks does not
+-- end for a change: its true means the ticks passed.
+local function config_waking_wait(b, pending)
+  local wait = Script._make_wait(nil)
+  return function()
+    if not wait() then return false end
     local id, config = b.ctl_take_config()
+    if id == nil then return true end
+    pending[#pending + 1] = { id = id, config = config }
+    return false
+  end
+end
+
+-- Apply every queued config change, in order. Returns false after an on_config_update error.
+local function apply_queued_config(b, script, ctx, pending)
+  while true do
+    local id, config = next_change(b, pending)
     if id == nil then return true end
     ctx.config = config
     local ok, failure = true, nil
@@ -208,8 +232,8 @@ local function apply_queued_config(b, script, ctx)
 end
 
 -- One loop iteration: queued config, then on_loop, then the sleep. Returns true to go on.
-local function iterate(b, script, ctx, iteration)
-  if not apply_queued_config(b, script, ctx) then return false end
+local function iterate(b, script, ctx, iteration, pending, sleep_wait)
+  if not apply_queued_config(b, script, ctx, pending) then return false end
   if b.ctl_stopping() then return false end
   if not ctx.game:refresh() and not ctx.game:is_attached() then return false end
   local ok, delay = try(script.on_loop, ctx)
@@ -218,14 +242,16 @@ local function iterate(b, script, ctx, iteration)
     return false
   end
   if Script._ends_loop(delay) then return false end
-  return ctx:sleep_ticks(delay) or not b.ctl_stopping()
+  return Script._sleep_ticks(ctx.game, sleep_wait, delay) or not b.ctl_stopping()
 end
 
 local function loop(b, script, ctx)
+  local pending = {}
+  local sleep_wait = config_waking_wait(b, pending)
   local iteration = 0
   while not b.ctl_stopping() do
     iteration = iteration + 1
-    if not iterate(b, script, ctx, iteration) then return end
+    if not iterate(b, script, ctx, iteration, pending, sleep_wait) then return end
   end
 end
 

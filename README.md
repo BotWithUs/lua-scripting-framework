@@ -93,7 +93,10 @@ helpers just build plain tables with the keys `key`, `kind`, `label`, `default`,
 `description`, and per kind `min` / `max` / `step`, `max_len` or `options`.
 `on_config_update(ctx, config)` is called with the full set once before `on_start`, and again
 between iterations whenever the user changes a setting; `ctx.config` always holds the set in
-force (a new table each time). On the command line the script gets the defaults.
+force (a new table each time). A change ends the sleep after `on_loop` early, so it applies
+even while the server tick is stalled (in the lobby, or a frozen client); a `ctx:sleep_ticks`
+the script calls itself still waits the full ticks. On the command line the script gets the
+defaults.
 
 The rules are stricter than the Java host's in four places, and a script that breaks one is
 refused before it runs: a `choice` default must be one of its options, a `choice` needs at

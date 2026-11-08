@@ -233,6 +233,87 @@ T["run: a queued config change is applied between iterations and acked"] = funct
   assert_(#b._ctl.dones == 1 and b._ctl.dones[1].id == 7 and b._ctl.dones[1].ok, "acked ok")
 end
 
+-- Stall the fake's server tick (the lobby, a frozen client) and run `on_wait(b, n)` on every
+-- ctl_wait. A wait that never ends is turned into a stop after WAIT_GUARD waits, so a
+-- regression fails the spec instead of hanging the suite.
+local WAIT_GUARD = 400
+local function stall_ticks(b, on_wait)
+  b.refresh = function() return true end
+  local base_wait = b.ctl_wait
+  b.ctl_wait = function(ms)
+    local n = #b._ctl.waits + 1
+    if n >= WAIT_GUARD then b._ctl.stop() end
+    if on_wait then on_wait(b, n) end
+    return base_wait(ms)
+  end
+end
+
+T["run: a config change wakes the loop's sleep while the server tick is stalled"] = function(assert_)
+  local p = plugin({
+    on_start = function() stall_ticks(_G.bwu, function(b, n)
+      if n == 3 then b._ctl.push(11, { logs = 4, tree = "willow" }) end
+    end) end,
+    on_loop = function(_, n) return n == 1 and 1000 or -1 end,
+  })
+  local b = run_plugin(p)
+  assert_(#b._ctl.waits < WAIT_GUARD, "the sleep ended for the change, not the guard: " .. #b._ctl.waits)
+  assert_(names(p.calls) == "on_config_update,on_start,on_loop,on_config_update,on_loop,on_stop",
+          "applied before the next on_loop: " .. names(p.calls))
+  assert_(p.calls[4][2].logs == 4, "the new set")
+  assert_(#b._ctl.dones == 1 and b._ctl.dones[1].id == 11 and b._ctl.dones[1].ok, "acked ok")
+end
+
+T["run: a change the sleep took is applied before the host's next, in order"] = function(assert_)
+  local p = plugin({
+    on_start = function() stall_ticks(_G.bwu, function(b, n)
+      if n == 2 then
+        b._ctl.push(21, { logs = 1, tree = "oak" })
+        b._ctl.push(22, { logs = 2, tree = "oak" })
+      end
+    end) end,
+    on_loop = function(_, n) return n == 1 and 1000 or -1 end,
+  })
+  local b = run_plugin(p)
+  assert_(#b._ctl.dones == 2 and b._ctl.dones[1].id == 21 and b._ctl.dones[2].id == 22, "acked 21 then 22")
+  assert_(p.calls[4][2].logs == 1 and p.calls[5][2].logs == 2, "applied 21 then 22: " .. names(p.calls))
+  assert_(names(p.calls):find("on_config_update,on_config_update,on_loop", 1, true), "both before on_loop")
+end
+
+T["run: a change the sleep took is left unacked when the run stops"] = function(assert_)
+  local p = plugin({
+    on_start = function()
+      local b = _G.bwu
+      stall_ticks(b, function(_, n) if n == 2 then b._ctl.push(31, { logs = 3, tree = "oak" }) end end)
+      local take = b.ctl_take_config
+      b.ctl_take_config = function()
+        local id, cfg = take()
+        if id ~= nil then b._ctl.stop() end
+        return id, cfg
+      end
+    end,
+    on_loop = function() return 1000 end,
+  })
+  local b = run_plugin(p)
+  assert_(b._ctl.takes == 1 and #b._ctl.dones == 0, "taken, never acked")
+  assert_(names(p.calls) == "on_config_update,on_start,on_loop,on_stop", "not applied: " .. names(p.calls))
+end
+
+T["run: ctx:sleep_ticks in on_loop does not end for a config change"] = function(assert_)
+  local slept
+  local p = plugin({
+    on_loop = function(ctx, n)
+      if n == 1 then
+        _G.bwu._ctl.push(41, { logs = 5, tree = "oak" })
+        slept = ctx:sleep_ticks(2)
+      end
+      return -1
+    end,
+  })
+  local b = run_plugin(p)
+  assert_(slept == true, "slept the full ticks")
+  assert_(b._ctl.takes == 0, "the script's own sleep took nothing")
+end
+
 T["run: on_config_update raising acks update_failed and ends as a script crash"] = function(assert_)
   local updates = 0
   local p = plugin({

@@ -55,21 +55,27 @@ local function make_wait(clients)
 end
 Script._make_wait = make_wait
 
+-- Wait until server_tick advances by n, calling wait() between polls. Returns true when it
+-- did, false when the run is stopping, the game was detached meanwhile (its client exited) or
+-- wait() returned false. n <= 0 returns at once.
+local function sleep_ticks(game, wait, n)
+  if Ctl.stopping() then return false end
+  if n <= 0 then return true end
+  if not game:refresh() and not game:is_attached() then return false end
+  local start = game:server_tick()
+  while true do
+    if not wait() then return false end
+    if not game:refresh() and not game:is_attached() then return false end
+    if game:server_tick() - start >= n then return true end
+  end
+end
+Script._sleep_ticks = sleep_ticks
+
 local function make_ctx(game, wait, clients)
   local ctx = { game = game, clients = clients, config = {} }
   -- Wait until server_tick advances by n. Returns true when it did, false when the run is
   -- stopping or the game was detached meanwhile (its client exited). n <= 0 returns at once.
-  function ctx:sleep_ticks(n)
-    if Ctl.stopping() then return false end
-    if n <= 0 then return true end
-    if not game:refresh() and not game:is_attached() then return false end
-    local start = game:server_tick()
-    while true do
-      if not wait() then return false end
-      if not game:refresh() and not game:is_attached() then return false end
-      if game:server_tick() - start >= n then return true end
-    end
-  end
+  function ctx:sleep_ticks(n) return sleep_ticks(game, wait, n) end
   -- True once the run has been asked to stop: finish up and return from on_loop.
   function ctx:stopping() return Ctl.stopping() end
   return ctx
