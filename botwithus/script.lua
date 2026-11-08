@@ -212,6 +212,13 @@ local function initial_config(script, manifest)
   return Config.defaults(fields)
 end
 
+-- Whether on_loop's return ends the loop: a negative, a non-number, or NaN (which no wait
+-- could ever reach, and which compares false with everything).
+local function ends_loop(delay)
+  return type(delay) ~= "number" or delay ~= delay or delay < 0
+end
+Script._ends_loop = ends_loop
+
 -- on_config_update, on_start, then the paced loop. `progress` records the phase and the
 -- 1-based iteration, so a failure is reported against the step it escaped from.
 local function lifecycle(script, ctx, game, opts, progress)
@@ -227,7 +234,7 @@ local function lifecycle(script, ctx, game, opts, progress)
     if not game:refresh() and not game:is_attached() then break end
     progress.iteration = iters + 1
     local delay = script.on_loop(ctx)
-    if type(delay) ~= "number" or delay < 0 then break end
+    if ends_loop(delay) then break end
     iters = iters + 1
     if opts.max_iters and iters >= opts.max_iters then break end
     if not ctx:sleep_ticks(delay) and Ctl.stopping() then break end

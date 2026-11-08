@@ -217,7 +217,7 @@ local function iterate(b, script, ctx, iteration)
     crash(PHASE_ON_LOOP, delay.report, iteration)
     return false
   end
-  if math.type(delay) == nil or delay < 0 then return false end
+  if Script._ends_loop(delay) then return false end
   return ctx:sleep_ticks(delay) or not b.ctl_stopping()
 end
 

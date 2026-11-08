@@ -393,6 +393,14 @@ T["run: an invalid schema returns without running"] = function(assert_)
   assert_(#crashes(b) == 0, "the host reports it")
 end
 
+T["run: a NaN delay from on_loop ends the loop"] = function(assert_)
+  local p = plugin({ on_loop = function() return 0 / 0 end })
+  local b = run_plugin(p, { stop_after_waits = 50 })
+  assert_(names(p.calls) == "on_config_update,on_start,on_loop,on_stop", "one on_loop: " .. names(p.calls))
+  assert_(#b._ctl.waits == 0, "it did not sleep")
+  assert_(#crashes(b) == 0, "a normal end")
+end
+
 -- run: self-running -------------------------------------------------------------------------
 
 local function with_env(vars, fn)
@@ -486,6 +494,21 @@ T["clients: wait_for and wait_attached return nil, stopping once the run is stop
 end
 
 -- bot.run on the command line ---------------------------------------------------------------
+
+T["bot.run (CLI): a NaN delay from on_loop ends the loop"] = function(assert_)
+  local b = setup({ mode = "cli" })
+  local wait = b.ctl_wait
+  b.ctl_wait = function(ms)   -- a sleep that never ends would hang the suite: fail it instead
+    if #b._ctl.waits >= 100 then error("slept on a NaN delay", 0) end
+    return wait(ms)
+  end
+  local loops = 0
+  local ok, err = pcall(require("botwithus").run,
+    { on_loop = function() loops = loops + 1; return 0 / 0 end }, { max_iters = 50 })
+  assert_(ok, "ran cleanly: " .. tostring(err))
+  assert_(loops == 1, "one on_loop, got " .. loops)
+  assert_(#b._ctl.waits == 0, "it did not sleep")
+end
 
 T["bot.run (CLI): an initial on_config_update error skips on_start and on_stop"] = function(assert_)
   local b = setup({ mode = "cli" })
