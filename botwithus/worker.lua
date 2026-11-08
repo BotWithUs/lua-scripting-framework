@@ -235,7 +235,8 @@ end
 local function iterate(b, script, ctx, iteration, pending, sleep_wait)
   if not apply_queued_config(b, script, ctx, pending) then return false end
   if b.ctl_stopping() then return false end
-  if not ctx.game:refresh() and not ctx.game:is_attached() then return false end
+  -- The client exited: its snapshot is unreadable and the host no longer lists it.
+  if ctx.game:_client_gone() then return false end
   local ok, delay = try(script.on_loop, ctx)
   if not ok then
     crash(PHASE_ON_LOOP, delay.report, iteration)

@@ -121,6 +121,34 @@ function Game:_release(reason)
   if on_detach then on_detach(self) end
 end
 
+-- Why a Game the framework released on its own stopped being attached: its client exited.
+Game.DETACHED_EXITED = "the client exited"
+
+-- Whether the host still lists `pid` as an attachable client.
+local function listed(b, pid)
+  for _, p in ipairs(b.discover_pids()) do
+    if p == pid then return true end
+  end
+  return false
+end
+
+-- Whether this Game's client has exited: it is detached, or its snapshot is not live and the
+-- host no longer lists its pid. The snapshot is not live when it cannot be read, or when the
+-- caller passes `stalled`: it has seen the server tick stand still for the stall bound. That
+-- second case is the one an exit produces in practice, as the host keeps its own view of the
+-- snapshot mapped until detach, so a read keeps succeeding (with frozen data) after the client
+-- is gone. A stall while the pid is still listed (the lobby, a frozen client) is not an exit.
+-- When the client has exited the Game is released, with DETACHED_EXITED as the reason, so
+-- every later check agrees. Refreshes the snapshot as a side effect.
+function Game:_client_gone(stalled)
+  if not self._host then return true end
+  local b = surface()
+  if b.refresh(self._host) and not stalled then return false end
+  if listed(b, self._pid) then return false end
+  self:_release(Game.DETACHED_EXITED)
+  return true
+end
+
 -- Pull a fresh snapshot copy for this tick. Call once at the top of a loop iter.
 -- On a detached Game it returns false, "detached", reason and touches nothing.
 function Game:refresh()

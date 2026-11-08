@@ -55,18 +55,38 @@ local function make_wait(clients)
 end
 Script._make_wait = make_wait
 
+-- How long the server tick may stand still during a sleep before the sleep checks whether
+-- the client has exited, in milliseconds (the Python framework's sleep_ticks bound). A stall
+-- alone (the lobby, a frozen client) does not end the sleep; an exited client does: its tick
+-- stops, and the host stops listing it (see Game:_client_gone).
+local STALL_CHECK_MS = 6000
+Script.STALL_CHECK_MS = STALL_CHECK_MS
+
 -- Wait until server_tick advances by n, calling wait() between polls. Returns true when it
--- did, false when the run is stopping, the game was detached meanwhile (its client exited) or
--- wait() returned false. n <= 0 returns at once.
+-- did, false when the run is stopping, wait() returned false, or the client exited: the Game
+-- was detached meanwhile (a botwithus.clients manager saw the exit), or the tick stood still
+-- for STALL_CHECK_MS and Game:_client_gone found the client gone. n <= 0 returns at once.
+-- The stall time is counted in waits of TICK_POLL_MS, as the waits are what take the time.
 local function sleep_ticks(game, wait, n)
   if Ctl.stopping() then return false end
   if n <= 0 then return true end
   if not game:refresh() and not game:is_attached() then return false end
   local start = game:server_tick()
+  local last, stalled_ms = start, 0
   while true do
     if not wait() then return false end
     if not game:refresh() and not game:is_attached() then return false end
-    if game:server_tick() - start >= n then return true end
+    local now = game:server_tick()
+    if now - start >= n then return true end
+    if now ~= last then
+      last, stalled_ms = now, 0
+    else
+      stalled_ms = stalled_ms + TICK_POLL_MS
+      if stalled_ms >= STALL_CHECK_MS then
+        if game:_client_gone(true) then return false end
+        stalled_ms = 0
+      end
+    end
   end
 end
 Script._sleep_ticks = sleep_ticks
@@ -74,7 +94,7 @@ Script._sleep_ticks = sleep_ticks
 local function make_ctx(game, wait, clients)
   local ctx = { game = game, clients = clients, config = {} }
   -- Wait until server_tick advances by n. Returns true when it did, false when the run is
-  -- stopping or the game was detached meanwhile (its client exited). n <= 0 returns at once.
+  -- stopping or its client exited (see sleep_ticks above). n <= 0 returns at once.
   function ctx:sleep_ticks(n) return sleep_ticks(game, wait, n) end
   -- True once the run has been asked to stop: finish up and return from on_loop.
   function ctx:stopping() return Ctl.stopping() end
@@ -237,7 +257,7 @@ local function lifecycle(script, ctx, game, opts, progress)
   progress.phase = "on_loop"
   local iters = 0
   while not Ctl.stopping() do
-    if not game:refresh() and not game:is_attached() then break end
+    if game:_client_gone() then break end
     progress.iteration = iters + 1
     local delay = script.on_loop(ctx)
     if ends_loop(delay) then break end

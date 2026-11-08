@@ -57,6 +57,14 @@ long loop of your own. A blocking walk (`ctx.game:walk(...)`) also ends early on
 its normal "cancelled" result, and `clients` waits (`:wait_for`, `:wait_attached`) return
 `nil, "stopping"`. On the command line nothing stops a run: `ctx:stopping()` is always false.
 
+**The client exiting.** When the game client goes away, the run ends on its own, in the GUI
+and through `bot.run` alike: no further `on_loop` runs, `on_stop` runs, and the game is
+detached. The client counts as gone when its server tick has stood still for 6 s (or its
+snapshot cannot be read) **and** the host no longer lists it as a client. A stalled tick
+while the client is still listed (the lobby, a frozen client) is not an exit, and the run
+keeps waiting. A `ctx:sleep_ticks(n)` running when the client goes returns `false` within
+that 6 s.
+
 **Changes for existing scripts on the command line.** Three things differ from earlier
 releases when a script runs through `bot.run`:
 
