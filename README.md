@@ -39,13 +39,80 @@ return script
 ```
 
 Run it: `bwu_host --lua examples/woodcutter.lua` (see `native-scripting-host`). A script file
-**returns its script table**, so a script loader can list it without running it.
+**returns its script table**, so a script loader can list it without running it. The GUI is
+such a loader (see *Running under the GUI* below).
 
 ## The lifecycle
 
-`on_start(ctx)` once → `on_loop(ctx)` repeatedly → `on_stop(ctx)` once. `on_loop` returns
-a **delay in server ticks**; a negative return stops the script. This matches the Java and
-C# hosts exactly.
+`on_config_update(ctx, config)` with the initial settings → `on_start(ctx)` once →
+`on_loop(ctx)` repeatedly → `on_stop(ctx)` once. `on_loop` returns a **delay in server
+ticks**; a negative return stops the script. This matches the Java and C# hosts exactly.
+Only `on_loop` is required.
+
+**Stopping.** When the GUI stops a run, `ctx:stopping()` turns `true`, `ctx:sleep_ticks(n)`
+returns `false` at once (it returns `true` when the ticks passed), no further `on_loop` runs,
+and `on_stop` runs. A script stuck in its own busy loop does not see the stop; after 10 s the
+GUI ends the process. So wait with `ctx:sleep_ticks`, and check `ctx:stopping()` inside any
+long loop of your own. On the command line nothing stops a run and both behave as before.
+
+## Settings (config fields)
+
+A script declares its settings as `config_fields`, and the GUI shows them as a form:
+
+```lua
+local config = require("botwithus.config")
+
+script.config_fields = {
+  config.int_field("logs", "Logs per trip", 28, { min = 1, max = 28 }),
+  config.choice_field("tree", "Tree", { "Tree", "Oak", "Willow" }, "Oak"),
+  config.bool_field("bank", "Bank the logs", true),
+  config.string_field("note", "Note", "", { max_len = 64 }),
+  config.item_id_field("food", "Food"),   -- default -1: no item
+}
+
+function script.on_config_update(ctx, cfg)
+  -- cfg holds every field: { logs = 28, tree = "Oak", bank = true, note = "", food = -1 }
+end
+```
+
+`config_fields` may also be a function `config_fields(script)` returning the list; the
+helpers just build plain tables with the keys `key`, `kind`, `label`, `default`,
+`description`, and per kind `min` / `max` / `step`, `max_len` or `options`.
+`on_config_update(ctx, config)` is called with the full set once before `on_start`, and again
+between iterations whenever the user changes a setting; `ctx.config` always holds the set in
+force (a new table each time). On the command line the script gets the defaults.
+
+The rules are stricter than the Java host's in four places, and a script that breaks one is
+refused before it runs: a `choice` default must be one of its options, a `choice` needs at
+least one option, an `item_id` default must be `-1` or more, and a `string` default over 256
+bytes needs a larger `max_len`. An invalid saved value is replaced by the field's default.
+
+The manifest is `{ name, version, author, description, category }`. `name` defaults to the
+file name, `version` to `"1.0"`, `author` and `description` to `""`. `category` is optional;
+use one of the Java host's category names (`Skilling`, `Combat`, `Woodcutting`, ...) to group
+the script in the GUI.
+
+## Running under the GUI
+
+`bwu_host` with no arguments opens the GUI. It lists the `.lua` files in
+`~/.botwithus/scripts/lua` and runs each one in its own worker process against the client you
+pick. To list a script it **loads the file** as `chunk(modname, path)`, so:
+
+- a **plugin** returns its script table, and the GUI shows its manifest and settings and
+  drives its lifecycle itself;
+- a file that returns anything else is **self-running**: the GUI lists it by its file name
+  with no settings, and runs it like the command line does, with zero arguments. Its
+  `Game.attach()` / `bot.run` attach to the client the GUI picked. Inside a GUI run, `bot.run`
+  ignores `max_iters` (with one info line in the log) and runs until `on_loop` ends it, the
+  client exits or the GUI stops it.
+
+Loading a file to list it runs its top level, so keep the self-run under
+`if select("#", ...) == 0 then ... end`, as every example does. Attaching to a client while the
+file is being listed fails with `attach during load: guard the self-run`. `print`, `io.write`
+and `bwu.log` output shows in the GUI's log view as well as in the run log.
+
+The entry points the host calls are in `botwithus.worker` (`describe(path)`,
+`run(path, client_pid)`); scripts do not call them.
 
 ## Logging and run logs
 
@@ -84,6 +151,8 @@ gives you `sleep_ticks`, not a millisecond timer, on purpose.
 |---|---|
 | `botwithus` | umbrella: `run`, `npcs`, `players`, `objects`, `Game`, `Tile`, `Actions`, `Events`, `Input`, `clients`, `Variables` |
 | `botwithus.game` | `Game.attach()`, `:self()`, `:npcs()`, `:players()`, `:objects()` (visible scenery with `shape` / `rotation` / `resolved_id`), `:open_ifaces()` (each open interface's `type` / `client_opened` / `is_modal`, plus the table total) / `:is_interface_open()` / `:modal_ifaces()` / `:is_modal_open()`, `:clocks()`, `:walk_to()` (one hop), `:path()` (query), `:walk()` (full pathed walk that executes transitions), `:walk_cancel()`, `:queue_actions()` / `:try_queue_actions()` (one round trip, all or nothing), `:poll_events()`, `:schedule_break(seconds)` / `:interrupt_break()`, `:varc_int()` / `:varc_string()`, `:read_varp(s)` / `:read_varbit(s)` / `:varp_state()` / `:varp()` / `:varp_long()` / `:varbit()`, `:overhead_text(kind, index)` / `:headbars(kind, index)` / `:hint_arrows()` (each nil, code on refusal). Player and self rows carry `server_tile` beside the visual `tile` |
+| `botwithus.config` | settings fields: `int_field`, `string_field`, `bool_field`, `choice_field`, `item_id_field`, plus `validate_fields`, `validate_manifest`, `defaults` |
+| `botwithus.worker` | the GUI's entry points (`describe`, `run`); called by the host, not by scripts |
 | `botwithus.variables` | the varp state names (`SET`, `DEFAULT`, `NO_SUCH_VARP`, `UNAVAILABLE`) |
 | `botwithus.entities` | fluent queries: `:of_type()`, `:within()`, `:where()`, `:nearest()`, `:all()` |
 | `botwithus.clients` | client management: `clients.new()` -> `:accounts()`, `:launch()` (-> `:wait_attached()`), `:stop()`, `:clients()`, `:attach()` (once per process), events via `:poll()` / `:pump()` / `:wait_for()` / `:on()`, `:on_close_requested()` and `:ack_close()`. See [docs/CLIENTS.md](docs/CLIENTS.md) |
@@ -244,6 +313,6 @@ languages.
 
 ```
 botwithus/   the library (pure Lua; no wire code)
-examples/    runnable sample scripts
+examples/    runnable sample scripts (woodcutter and banker are plugins, manager is self-running)
 spec/        unit suite + fake_bwu surface + a tiny runner
 ```

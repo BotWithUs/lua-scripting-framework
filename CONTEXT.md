@@ -28,7 +28,7 @@ This repo contains **no wire code** — no pipe, no shared memory. It is pure Lu
   whole host shares.
 - **Per-instance state.** A `clients` manager owns its handlers, its view of the clients and
   its attach claims; nothing lives at module level, so tests stay isolated.
-- **Match the other hosts' lifecycle** — `on_start`/`on_loop`(→ticks or negative)/`on_stop`.
+- **Match the other hosts' lifecycle** — `on_config_update`/`on_start`/`on_loop`(→ticks or negative)/`on_stop`.
 
 ## Tests
 
