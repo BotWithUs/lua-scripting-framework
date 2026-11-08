@@ -316,7 +316,9 @@ function Game:is_modal_open()
   return #self:modal_ifaces() > 0
 end
 
--- Queue any action built by botwithus.actions (or a raw {id,p1,p2,p3}).
+-- Queue any action built by botwithus.actions (or a raw {id,p1,p2,p3}). Returns true, or
+-- false and the host's error (e.g. "queue_action: queue_full"); an older bwu_host returns
+-- false alone.
 function Game:do_action(a)
   return surface().queue_action(host(self), a.id, a.p1 or 0, a.p2 or 0, a.p3 or 0)
 end
@@ -331,6 +333,10 @@ Game.QUEUED_UNKNOWN = "unknown"   -- the call failed (timeout, pipe gone): some 
 Game.QUEUED_PREFIX  = "prefix"    -- an agent older than all-or-nothing queued only a prefix
 
 local DEFAULT_MAX_ACTION_BATCH = 128
+
+-- The third value bwu.queue_actions returns with nil, err.
+local HOST_REFUSED = "refused"   -- the host or the agent refused the batch: nothing queued
+local HOST_UNKNOWN = "unknown"   -- timeout or transport failure: the outcome is unknown
 
 local function refusal_code(err)
   local text = tostring(err)
@@ -353,9 +359,18 @@ function Game:try_queue_actions(list)
     return nil, ("a batch of %d actions is more than MAX_ACTION_BATCH (%d); nothing was queued")
       :format(#list, cap), Game.QUEUED_NONE
   end
-  local n, err = b.queue_actions(host(self), list)
+  local n, err, outcome = b.queue_actions(host(self), list)
   if n == nil then
+    -- The host says which it was: "refused" (nothing queued) or "unknown". A bwu_host that
+    -- predates that third value leaves it nil; then the agent's refusal code in the message
+    -- is the only sign that nothing was queued.
     local code = refusal_code(err)
+    if outcome == HOST_REFUSED then
+      return nil, ("the batch was refused (%s); nothing was queued"):format(code or tostring(err)),
+        Game.QUEUED_NONE
+    elseif outcome == HOST_UNKNOWN then
+      code = nil
+    end
     if code then
       return nil, ("the agent refused the batch (%s); nothing was queued"):format(code), Game.QUEUED_NONE
     end

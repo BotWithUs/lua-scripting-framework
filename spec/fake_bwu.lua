@@ -58,7 +58,10 @@ function M.new(opts)
     actions = {},   -- recorded queue_action calls
     batches = {},   -- recorded queue_actions calls, one list per call
     queue_accept = opts.queue_accept,  -- nil: queue_actions takes every action (an old agent's prefix)
-    queue_error = opts.queue_error,    -- set: queue_actions returns nil, queue_error (nothing queued)
+    queue_error = opts.queue_error,    -- set: queue_actions returns nil, queue_error, queue_outcome
+    -- the third value: "refused" (default) or "unknown"; false plays a bwu_host without it
+    queue_outcome = opts.queue_outcome == nil and "refused" or opts.queue_outcome,
+    queue_action_error = opts.queue_action_error,  -- set: queue_action returns false, it
     events = opts.events or {},        -- raw { type, body } records poll_events hands back once
     breaks = {},                       -- recorded schedule_break ms / "interrupt" calls
     varcs = opts.varcs or {},                -- varc id -> int
@@ -173,6 +176,7 @@ function M.new(opts)
     return out, state.open_iface_total or #out
   end
   function bwu.queue_action(_, id, p1, p2, p3)
+    if state.queue_action_error then return false, state.queue_action_error end
     state.actions[#state.actions + 1] = { id = id, p1 = p1, p2 = p2, p3 = p3 }
     return true
   end
@@ -182,7 +186,8 @@ function M.new(opts)
   function bwu.queue_actions(_, list)
     if state.queue_error then
       state.batches[#state.batches + 1] = list
-      return nil, state.queue_error
+      if state.queue_outcome == false then return nil, state.queue_error end
+      return nil, state.queue_error, state.queue_outcome
     end
     local accepted = math.min(#list, state.queue_accept or #list)
     local batch = {}

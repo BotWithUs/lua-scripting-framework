@@ -127,8 +127,13 @@ elseif outcome == bot.Game.QUEUED_NONE then ... -- refused: nothing queued, safe
 else ... end                                    -- QUEUED_UNKNOWN (timeout, pipe gone): check first
 ```
 
-An agent from before all-or-nothing could queue a prefix; that comes back as
-`QUEUED_PREFIX` with the count as a fourth value.
+The host tells the two failures apart (`"refused"` or `"unknown"`). On a `bwu_host` too old to
+say, a failure counts as `QUEUED_NONE` only when the message names one of the agent's refusal
+codes, and as `QUEUED_UNKNOWN` otherwise. An agent from before all-or-nothing could queue a
+prefix; that comes back as `QUEUED_PREFIX` with the count as a fourth value.
+
+`ctx.game:do_action(a)` queues one action and returns `true`, or `false` and the host's error
+(for example `queue_action: queue_full`).
 
 An action the agent queued can still be dropped later if its target never becomes
 clickable. `ctx.game:poll_events()` then carries an `action_refused` event with the action

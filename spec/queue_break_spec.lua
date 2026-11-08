@@ -42,10 +42,46 @@ T["each agent refusal says nothing was queued"] = function(assert_)
 end
 
 T["a failed call says the outcome is unknown"] = function(assert_)
-  local g = attach({ queue_error = "rpc_timeout" })
+  local g = attach({ queue_error = "rpc_timeout", queue_outcome = "unknown" })
   local n, msg, outcome = g:try_queue_actions(two())
   assert_(n == nil and outcome == Game.QUEUED_UNKNOWN, "QUEUED_UNKNOWN")
   assert_(msg:find("rpc_timeout", 1, true) and msg:find("may have been queued", 1, true), msg)
+end
+
+-- The host's third value decides; the message text is not consulted when it is there.
+T["host 'refused' means nothing queued, whatever the message"] = function(assert_)
+  local g = attach({ queue_error = "queue_actions: count must be 0..BWU_MAX_ACTION_BATCH" })
+  local n, msg, outcome = g:try_queue_actions(two())
+  assert_(n == nil and outcome == Game.QUEUED_NONE, "a host-side refusal is QUEUED_NONE: " .. tostring(msg))
+  assert_(msg:find("nothing was queued", 1, true), msg)
+end
+
+T["host 'unknown' wins over a refusal code in the message"] = function(assert_)
+  local g = attach({ queue_error = "queue_actions: queue_full", queue_outcome = "unknown" })
+  local _, msg, outcome = g:try_queue_actions(two())
+  assert_(outcome == Game.QUEUED_UNKNOWN, "unknown is unknown: " .. tostring(msg))
+end
+
+-- A bwu_host older than the third value: fall back to the agent's refusal code in the message.
+T["older host: a refusal code in the message means nothing queued"] = function(assert_)
+  local g = attach({ queue_error = "queue_actions: queue_full", queue_outcome = false })
+  local n, msg, outcome = g:try_queue_actions(two())
+  assert_(n == nil and outcome == Game.QUEUED_NONE, "QUEUED_NONE")
+  assert_(msg:find("queue_full", 1, true) and msg:find("nothing was queued", 1, true), msg)
+end
+
+T["older host: any other message means the outcome is unknown"] = function(assert_)
+  local g = attach({ queue_error = "rpc_timeout", queue_outcome = false })
+  local _, msg, outcome = g:try_queue_actions(two())
+  assert_(outcome == Game.QUEUED_UNKNOWN, "QUEUED_UNKNOWN: " .. tostring(msg))
+end
+
+T["do_action passes queue_action's error through"] = function(assert_)
+  local g = attach({ queue_action_error = "queue_action: queue_full" })
+  local ok, err = g:do_action({ id = 23, p1 = 1, p2 = 3200, p3 = 3200 })
+  assert_(ok == false and err == "queue_action: queue_full", "false, err: " .. tostring(err))
+  g = attach()
+  assert_(g:do_action({ id = 23, p1 = 1, p2 = 3200, p3 = 3200 }) == true, "true when queued")
 end
 
 T["an old agent's prefix is reported as a prefix"] = function(assert_)
