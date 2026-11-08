@@ -165,6 +165,27 @@ T["describe: config_fields raising, or a table without on_loop, is a load crash"
           and crashes(b)[1].report:find("on_loop", 1, true), "no on_loop -> load")
 end
 
+T["describe and run: a plugin can require a file beside it"] = function(assert_)
+  local path = fixture("sibling.plugin_with_helper")
+  local saved = package.path
+  for _, entry in ipairs({ "describe", "run" }) do
+    package.path = saved
+    package.loaded["sibling_helper"] = nil
+    local b = setup({ mode = entry == "run" and "worker" or "describe" })
+    if entry == "run" then worker.run(path, CLIENT_PID) else worker.describe(path) end
+    local d = b._ctl.describes[1]
+    assert_(#crashes(b) == 0, entry .. ": no crash: " .. tostring(crashes(b)[1] and crashes(b)[1].report))
+    assert_(d and d.manifest.name == "FromSibling", entry .. ": the sibling module was found")
+    local dir = path:match("^(.*)[/\\][^/\\]*$")
+    assert_(package.path:sub(1, #dir + 7) == dir .. "/?.lua;", entry .. ": the script dir comes first")
+  end
+  worker.describe(path)
+  local _, count = package.path:gsub("sibling/%?%.lua", "")
+  assert_(count == 1, "added once, not per load")
+  package.path = saved
+  package.loaded["sibling_helper"] = nil
+end
+
 T["describe: an invalid schema is left to the host (no crash block, nothing run)"] = function(assert_)
   local b = setup({ mode = "describe" })
   _G.FIXTURE_PLUGIN = plugin({ config_fields = {

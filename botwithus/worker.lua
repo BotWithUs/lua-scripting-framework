@@ -44,6 +44,19 @@ local function stem_of(path)
   return (name:gsub("%.lua$", ""))
 end
 
+-- The directory a script file is in ("." for a bare file name).
+local function dir_of(path)
+  return path:match("^(.*)[/\\][^/\\]*$") or "."
+end
+
+-- Let the script `require` the files beside it: put its directory first on package.path,
+-- once, before the file is loaded.
+local function add_script_dir(path)
+  local dir = dir_of(path)
+  local entries = dir .. "/?.lua;" .. dir .. "/?/init.lua;"
+  if package.path:sub(1, #entries) ~= entries then package.path = entries .. package.path end
+end
+
 -- A traceback-taking message handler for xpcall.
 local capture = Script._capture
 
@@ -80,6 +93,7 @@ end
 
 -- Load the file in plugin mode. Returns { desc, script? }, or nil after writing a load crash.
 local function load_plugin(path)
+  add_script_dir(path)
   local chunk, load_err = loadfile(path, "t")
   if not chunk then
     crash(PHASE_LOAD, tostring(load_err))

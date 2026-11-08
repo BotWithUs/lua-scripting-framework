@@ -106,6 +106,9 @@ pick. To list a script it **loads the file** as `chunk(modname, path)`, so:
   ignores `max_iters` (with one info line in the log) and runs until `on_loop` ends it, the
   client exits or the GUI stops it.
 
+The script's own folder is put first on `package.path`, so a script can `require` the
+files beside it (`require("helpers")` finds `helpers.lua` or `helpers/init.lua` next to it).
+
 Loading a file to list it runs its top level, so keep the self-run under
 `if select("#", ...) == 0 then ... end`, as every example does. Attaching to a client while the
 file is being listed fails with `attach during load: guard the self-run`. `print`, `io.write`
