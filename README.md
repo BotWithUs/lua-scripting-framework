@@ -26,11 +26,8 @@ function script.on_loop(ctx)
   local me   = ctx.game:self()
   local tree = bot.objects(ctx.game):of_type(TREE):nearest(me.tile)
   if not tree then return -1 end
-  if me.tile:distance(tree.tile) > 1 then
-    ctx.game:walk_to(tree.tile.x, tree.tile.y)
-    return 1
-  end
-  -- object option 1 ("Chop down"): p1 = loc id, p2 / p3 = its tile
+  -- object option 1 ("Chop down"): p1 = loc id, p2 / p3 = its tile. Like a click, it makes
+  -- the client walk the player to the tree first.
   ctx.game:do_action({ id = 3, p1 = tree.id, p2 = tree.tile.x, p3 = tree.tile.y })
   return 5
 end

@@ -6,7 +6,10 @@
 -- every other record passes through unchanged (still { type, body }), so nothing is lost.
 --
 -- Bodies are little-endian PODs whose layouts belong to the agent; the sizes below are the
--- agent's, and a body of the wrong size is refused loudly rather than read as wrong numbers.
+-- agent's minimum. Bytes past them are ignored (a later agent may append fields). A body too
+-- short to hold its fields is never read as wrong numbers: the record comes back raw, with
+-- `error` saying why, and the rest of the batch still decodes -- the host ring is already
+-- drained, so raising would lose every event read with it.
 
 local Events = {}
 
@@ -51,12 +54,12 @@ local ACTION_REFUSED_SIZE  = 28   -- the same four, then uint32 reason, anchorCa
 function Events.reason_name(code) return REASON_NAMES[code] or UNKNOWN end
 function Events.anchor_name(code) return ANCHOR_NAMES[code] or UNKNOWN end
 
-local function check_size(name, body, size)
-  if type(body) ~= "string" or #body ~= size then
-    error(("botwithus: %s event body is %s bytes, expected %d; the host and framework"
-      .. " disagree about the event layout"):format(name, type(body) == "string" and #body
-      or type(body), size), 3)
-  end
+-- nil when `body` holds at least `size` bytes, else why it cannot be decoded.
+local function size_error(name, body, size)
+  if type(body) == "string" and #body >= size then return nil end
+  return ("%s event body is %s bytes, expected at least %d; the host and framework"
+    .. " disagree about the event layout"):format(name,
+    type(body) == "string" and tostring(#body) or type(body), size)
 end
 
 local function decode_action(name, etype, body)
@@ -65,12 +68,10 @@ local function decode_action(name, etype, body)
 end
 
 local function decode_executed(rec)
-  check_size("action_executed", rec.body, ACTION_EXECUTED_SIZE)
   return decode_action("action_executed", rec.type, rec.body)
 end
 
 local function decode_refused(rec)
-  check_size("action_refused", rec.body, ACTION_REFUSED_SIZE)
   local ev = decode_action("action_refused", rec.type, rec.body)
   local reason, anchor, held_ms = string.unpack("<I4I4I4", rec.body, ACTION_EXECUTED_SIZE + 1)
   ev.reason, ev.reason_name = reason, Events.reason_name(reason)
@@ -80,18 +81,23 @@ local function decode_refused(rec)
 end
 
 local DECODERS = {
-  [Events.ACTION_EXECUTED] = decode_executed,
-  [Events.ACTION_REFUSED]  = decode_refused,
+  [Events.ACTION_EXECUTED] = { name = "action_executed", size = ACTION_EXECUTED_SIZE,
+                               fn = decode_executed },
+  [Events.ACTION_REFUSED]  = { name = "action_refused", size = ACTION_REFUSED_SIZE,
+                               fn = decode_refused },
 }
 
--- Decode one { type, body } record. A known type comes back as a named table:
+-- Decode one { type, body } record. Never raises. A known type comes back as a named table:
 --   action_executed  { type, name, action_id, param1, param2, param3 }
 --   action_refused   the same, plus reason / reason_name, anchor_case / anchor_name, held_ms
+-- A known type whose body is too short comes back as { type, body, error = <why> }.
 -- Any other record is returned as it was.
 function Events.decode(rec)
-  local decoder = DECODERS[rec.type]
-  if decoder == nil then return rec end
-  return decoder(rec)
+  local d = DECODERS[rec.type]
+  if d == nil then return rec end
+  local err = size_error(d.name, rec.body, d.size)
+  if err then return { type = rec.type, body = rec.body, error = "botwithus: " .. err } end
+  return d.fn(rec)
 end
 
 -- Decode a list of records, in order.

@@ -126,8 +126,10 @@ end
 
 T["out-of-range breaks are refused before sending"] = function(assert_)
   local bad = { 0, 0.0, -1, -300, 0.0004, Game.MAX_BREAK_SECONDS + 0.001, 2147484,
-                math.huge, -math.huge, 0 / 0, true, "300", nil }
-  for i = 1, 13 do
+                math.huge, -math.huge, 0 / 0, true, "300", nil,
+                -- integers whose * 1000 wraps modulo 2^64 into range (to 8 ms and 1000 ms)
+                2066035336255469781, -9223372036854775807, math.maxinteger, math.mininteger }
+  for i = 1, 17 do
     local g, st = attach()
     local ok, err = pcall(g.schedule_break, g, bad[i])
     assert_(not ok and tostring(err):find("duration_seconds", 1, true), "case " .. i .. ": " .. tostring(err))

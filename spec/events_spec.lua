@@ -58,9 +58,34 @@ T["every reason and anchor code has its name"] = function(assert_)
   assert_(Events.reason_name(9) == "unknown" and Events.anchor_name(9) == "unknown", "unknown codes")
 end
 
-T["action_refused of the wrong size is refused loudly"] = function(assert_)
-  local ok, err = pcall(Events.decode, { type = 41, body = REFUSED:sub(1, 16) })
-  assert_(not ok and tostring(err):find("16 bytes, expected 28", 1, true), tostring(err))
+T["a longer body decodes and its trailing bytes are ignored"] = function(assert_)
+  local ev = Events.decode({ type = 41, body = REFUSED .. bytes({ 0xAA, 0xBB, 0xCC, 0xDD }) })
+  assert_(ev.name == "action_refused" and ev.error == nil, "decoded")
+  assert_(ev.param3 == 93913157 and ev.reason_name == "anchor_timeout" and ev.held_ms == 4500,
+    "fields read from the first 28 bytes")
+  local ex = Events.decode({ type = 40, body = REFUSED })   -- 28 bytes for a 16-byte event
+  assert_(ex.name == "action_executed" and ex.action_id == 57 and ex.reason == nil, "40 with extra bytes")
+end
+
+T["a short body comes back raw with an error, without raising"] = function(assert_)
+  local short = REFUSED:sub(1, 16)
+  local ok, ev = pcall(Events.decode, { type = 41, body = short })
+  assert_(ok, "decode does not raise: " .. tostring(ev))
+  assert_(ev.type == 41 and ev.body == short and ev.name == nil, "the raw record")
+  assert_(ev.error and ev.error:find("16 bytes, expected at least 28", 1, true), tostring(ev.error))
+  local missing = Events.decode({ type = 40 })
+  assert_(missing.error and missing.error:find("nil bytes", 1, true), tostring(missing.error))
+end
+
+T["one short body does not lose the rest of the batch"] = function(assert_)
+  local evs = Events.decode_all({
+    { type = 41, body = REFUSED },
+    { type = 41, body = REFUSED:sub(1, 3) },
+    { type = 40, body = REFUSED:sub(1, 16) },
+  })
+  assert_(#evs == 3, "all three come back")
+  assert_(evs[1].name == "action_refused" and evs[3].name == "action_executed", "neighbours decode")
+  assert_(evs[2].error ~= nil and evs[2].name == nil, "the short one is marked")
 end
 
 T["action_executed decodes the four ints"] = function(assert_)

@@ -1,4 +1,4 @@
--- examples/woodcutter.lua -- a minimal sample script: find the nearest tree, walk to it, chop.
+-- examples/woodcutter.lua -- a minimal sample script: find the nearest tree and chop it.
 --
 -- Run under the native host:  bwu_host --lua examples/woodcutter.lua
 -- (needs botwithus/ on package.path; see scripts/run_example.ps1)
@@ -9,13 +9,15 @@
 
 local bot = require("botwithus")
 
--- Trees are scenery (locs), not NPCs. Loc ids from the game's own names: TREE and TREE2,
--- the plain "Tree" whose first option is "Chop down".
-local TREE_IDS = { [1276] = true, [1278] = true }
+-- Trees are scenery (locs), not NPCs. Loc ids from the game's own names: TREE, LIGHTTREE
+-- and TREE2, plain trees whose first option is "Chop down".
+local TREE_IDS = { [1276] = true, [1277] = true, [1278] = true }
 
--- The agent's "object option 1" action: p1 = loc id, p2 / p3 = the loc's tile.
+-- The agent's "object option 1" action: p1 = loc id, p2 / p3 = the loc's tile. Like a click
+-- on the tree, it makes the client walk the player up to it first, so there is no walking
+-- step here (a tree covers several tiles, and its tile is only one corner of them).
 local OBJECT_OPTION_1 = 3
-local REACH = 1   -- tiles; close enough to chop
+local CHOP_TICKS = 5   -- give the chop a few ticks before looking again
 
 local script = {
   manifest = { name = "Woodcutter", author = "example", version = "1.0.0" },
@@ -34,15 +36,9 @@ function script.on_loop(ctx)
     io.write("woodcutter: no tree nearby; stopping\n")
     return -1
   end
-  local d = me.tile:distance(tree.tile)
-  if d > REACH then
-    ctx.game:walk_to(tree.tile.x, tree.tile.y)
-    io.write(("woodcutter: walking toward %s (d=%d)\n"):format(tostring(tree.tile), d))
-    return 1
-  end
   ctx.game:do_action({ id = OBJECT_OPTION_1, p1 = tree.id, p2 = tree.tile.x, p3 = tree.tile.y })
   io.write(("woodcutter: chopping tree %d at %s\n"):format(tree.id, tostring(tree.tile)))
-  return 5   -- give the chop a few ticks before looking again
+  return CHOP_TICKS
 end
 
 function script.on_stop(ctx)

@@ -31,18 +31,20 @@ local function run_once(locs)
   return delay, b._state.actions[#b._state.actions]
 end
 
-T["woodcutter walks to the nearest tree object"] = function(assert_)
+T["woodcutter chops the nearest tree object, however far, with no walk step"] = function(assert_)
   local delay, a = run_once({
-    { id = 1277, tile = { x = 3201, y = 3200, plane = 0 }, flags = 0 },   -- a nearer loc, not TREE
-    { id = TREE, tile = { x = 3205, y = 3200, plane = 0 }, flags = 0 },
+    { id = 1281, tile = { x = 3201, y = 3200, plane = 0 }, flags = 0 },   -- OAKTREE: not in the set
+    { id = TREE, tile = { x = 3209, y = 3200, plane = 0 }, flags = 0 },
+    { id = 1278, tile = { x = 3205, y = 3200, plane = 0 }, flags = 0 },   -- TREE2, nearer
   })
-  assert_(delay == 1, "walking returns 1 tick")
-  assert_(a.id == 23 and a.p2 == 3205 and a.p3 == 3200, "walks to the TREE, not the 1277")
+  assert_(delay > 0, "keeps going")
+  assert_(a.id == 3 and a.p1 == 1278 and a.p2 == 3205 and a.p3 == 3200, "Object1 on the nearest tree")
+  assert_(#_G.bwu._state.actions == 1, "one action, no walk")
 end
 
-T["woodcutter chops an adjacent tree with object option 1"] = function(assert_)
-  local _, a = run_once({ { id = TREE, tile = { x = 3201, y = 3201, plane = 0 }, flags = 0 } })
-  assert_(a.id == 3 and a.p1 == TREE and a.p2 == 3201 and a.p3 == 3201, "Object1 on the tree")
+T["woodcutter counts LIGHTTREE as a tree"] = function(assert_)
+  local _, a = run_once({ { id = 1277, tile = { x = 3201, y = 3201, plane = 0 }, flags = 0 } })
+  assert_(a and a.id == 3 and a.p1 == 1277, "Object1 on the 1277")
 end
 
 T["woodcutter stops when no tree is visible"] = function(assert_)

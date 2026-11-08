@@ -352,6 +352,8 @@ end
 --   nil, message, QUEUED_UNKNOWN  the call failed; whether anything was queued is unknown
 --   nil, message, QUEUED_PREFIX, n  (an old agent) only the first n were queued
 -- At most bwu.MAX_ACTION_BATCH actions; a longer list is refused before anything is sent.
+-- Malformed input still RAISES rather than returning: an entry that is not a table, an id
+-- that is not an integer, or a field outside int32. Nothing is queued in those cases.
 function Game:try_queue_actions(list)
   local b = surface()
   local cap = b.MAX_ACTION_BATCH or DEFAULT_MAX_ACTION_BATCH
@@ -630,7 +632,8 @@ function Game.break_duration_ms(seconds)
   if seconds ~= seconds or seconds == math.huge or seconds == -math.huge then
     error("botwithus: duration_seconds must be finite, got " .. tostring(seconds), 2)
   end
-  local ms = round_half_even(seconds * MS_PER_SECOND)
+  -- Multiply as a float: an integer product wraps modulo 2^64 and could land in range.
+  local ms = round_half_even((seconds + 0.0) * MS_PER_SECOND)
   if ms < 1 then
     error("botwithus: duration_seconds must be at least 0.001 s (1 ms), got " .. tostring(seconds), 2)
   end
