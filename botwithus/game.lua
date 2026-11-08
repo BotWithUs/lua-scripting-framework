@@ -9,6 +9,7 @@ local Tile    = require("botwithus.tile")
 local Actions = require("botwithus.actions")
 local Orientation = require("botwithus.orientation")
 local Variables = require("botwithus.variables")
+local Events = require("botwithus.events")
 
 -- Resolve the surface each call. `_G.bwu` is set by the host (or a test fake).
 -- host(self), further down, is the guard every per-client call goes through.
@@ -315,16 +316,82 @@ function Game:is_modal_open()
   return #self:modal_ifaces() > 0
 end
 
--- Queue any action built by botwithus.actions (or a raw {id,p1,p2,p3}).
+-- Queue any action built by botwithus.actions (or a raw {id,p1,p2,p3}). Returns true, or
+-- false and the host's error (e.g. "queue_action: queue_full"); an older bwu_host returns
+-- false alone.
 function Game:do_action(a)
   return surface().queue_action(host(self), a.id, a.p1 or 0, a.p2 or 0, a.p3 or 0)
 end
 
--- Queue a list of actions in one round trip, in order. Returns how many the agent accepted,
--- which is fewer than #list only when its queue is full. At most bwu.MAX_ACTION_BATCH.
+-- queue_actions is all or nothing: the agent queues the whole batch or refuses the whole
+-- batch and queues none of it. These are its refusal codes; the error names one of them.
+Game.QUEUE_REFUSALS = { "batch_too_large", "queue_full", "action_id_required", "bad_param" }
+
+-- What a failed :try_queue_actions says about the batch.
+Game.QUEUED_NONE    = "none"      -- refused: not one action was queued; safe to retry
+Game.QUEUED_UNKNOWN = "unknown"   -- the call failed (timeout, pipe gone): some may be queued
+Game.QUEUED_PREFIX  = "prefix"    -- an agent older than all-or-nothing queued only a prefix
+
+local DEFAULT_MAX_ACTION_BATCH = 128
+
+-- The third value bwu.queue_actions returns with nil, err.
+local HOST_REFUSED = "refused"   -- the host or the agent refused the batch: nothing queued
+local HOST_UNKNOWN = "unknown"   -- timeout or transport failure: the outcome is unknown
+
+local function refusal_code(err)
+  local text = tostring(err)
+  for _, code in ipairs(Game.QUEUE_REFUSALS) do
+    if text:find(code, 1, true) then return code end
+  end
+  return nil
+end
+
+-- Queue a list of actions in order, in one round trip, without raising on failure.
+--   #list                         every action was queued
+--   nil, message, QUEUED_NONE     the batch was refused and nothing was queued
+--   nil, message, QUEUED_UNKNOWN  the call failed; whether anything was queued is unknown
+--   nil, message, QUEUED_PREFIX, n  (an old agent) only the first n were queued
+-- At most bwu.MAX_ACTION_BATCH actions; a longer list is refused before anything is sent.
+-- Malformed input still RAISES rather than returning: an entry that is not a table, an id
+-- that is not an integer, or a field outside int32. Nothing is queued in those cases.
+function Game:try_queue_actions(list)
+  local b = surface()
+  local cap = b.MAX_ACTION_BATCH or DEFAULT_MAX_ACTION_BATCH
+  if #list > cap then
+    return nil, ("a batch of %d actions is more than MAX_ACTION_BATCH (%d); nothing was queued")
+      :format(#list, cap), Game.QUEUED_NONE
+  end
+  local n, err, outcome = b.queue_actions(host(self), list)
+  if n == nil then
+    -- The host says which it was: "refused" (nothing queued) or "unknown". A bwu_host that
+    -- predates that third value leaves it nil; then the agent's refusal code in the message
+    -- is the only sign that nothing was queued.
+    local code = refusal_code(err)
+    if outcome == HOST_REFUSED then
+      return nil, ("the batch was refused (%s); nothing was queued"):format(code or tostring(err)),
+        Game.QUEUED_NONE
+    elseif outcome == HOST_UNKNOWN then
+      code = nil
+    end
+    if code then
+      return nil, ("the agent refused the batch (%s); nothing was queued"):format(code), Game.QUEUED_NONE
+    end
+    return nil, ("the call failed (%s); some or all of the actions may have been queued")
+      :format(tostring(err)), Game.QUEUED_UNKNOWN
+  end
+  if n < #list then
+    return nil, ("the agent queued %d of %d actions, a prefix: it predates all-or-nothing"
+      .. " queue_actions"):format(n, #list), Game.QUEUED_PREFIX, n
+  end
+  return n
+end
+
+-- Queue a list of actions in order, in one round trip. All or nothing: returns #list when
+-- every action was queued, and otherwise raises, saying whether anything was queued (see
+-- :try_queue_actions for the non-raising form).
 function Game:queue_actions(list)
-  local n, err = surface().queue_actions(host(self), list)
-  if not n then error("botwithus: queue_actions failed: " .. tostring(err), 2) end
+  local n, msg = self:try_queue_actions(list)
+  if n == nil then error("botwithus: queue_actions: " .. msg, 2) end
   return n
 end
 
@@ -527,6 +594,86 @@ function Game:local_health()
     error("botwithus: this bwu_host has no local_health; it predates it -- update it", 2)
   end
   return fn(host(self))
+end
+
+
+-- Agent events -------------------------------------------------------------------------
+
+-- Every event the agent published since the last call, in order, decoded by
+-- botwithus.events: action_refused / action_executed come back as named tables, every other
+-- type as its raw { type, body } record. Reading drains the host's ring for this client.
+function Game:poll_events()
+  return Events.decode_all(surface().poll_events(host(self)))
+end
+
+-- Breaks ---------------------------------------------------------------------------------
+
+local MS_PER_SECOND = 1000
+-- The agent's schedule_break reads `duration` as whole milliseconds and refuses anything
+-- above INT32_MAX. A zero or negative duration schedules nothing, silently, so it is refused
+-- here instead.
+Game.MAX_BREAK_MS      = 0x7FFFFFFF
+Game.MAX_BREAK_SECONDS = Game.MAX_BREAK_MS / MS_PER_SECOND
+
+-- Round half to even, as the Python framework does, so both frontends send the same ms.
+local function round_half_even(x)
+  local f = math.floor(x)
+  local diff = x - f
+  if diff > 0.5 or (diff == 0.5 and f % 2 == 1) then f = f + 1 end
+  return f
+end
+
+-- `seconds` as the whole milliseconds the agent's `duration` takes. Raises, naming
+-- duration_seconds, for a non-number, a non-finite value, under 1 ms, or over the cap.
+function Game.break_duration_ms(seconds)
+  if type(seconds) ~= "number" then
+    error("botwithus: duration_seconds must be a number of seconds, not " .. type(seconds), 2)
+  end
+  if seconds ~= seconds or seconds == math.huge or seconds == -math.huge then
+    error("botwithus: duration_seconds must be finite, got " .. tostring(seconds), 2)
+  end
+  -- Multiply as a float: an integer product wraps modulo 2^64 and could land in range.
+  local ms = round_half_even((seconds + 0.0) * MS_PER_SECOND)
+  if ms < 1 then
+    error("botwithus: duration_seconds must be at least 0.001 s (1 ms), got " .. tostring(seconds), 2)
+  end
+  if ms > Game.MAX_BREAK_MS then
+    error(("botwithus: duration_seconds must be at most %s s (the agent's limit is %d ms), got %s")
+      :format(tostring(Game.MAX_BREAK_SECONDS), Game.MAX_BREAK_MS, tostring(seconds)), 2)
+  end
+  return math.tointeger(ms)
+end
+
+-- Feature-detected: on a bwu_host that predates breaks, has_breaks() is false and the two
+-- calls below raise.
+function Game:has_breaks()
+  local b = surface()
+  return b.schedule_break ~= nil and b.interrupt_break ~= nil
+end
+
+local function break_fn(name)
+  local fn = surface()[name]
+  if fn == nil then
+    error("botwithus: this bwu_host has no " .. name .. "; it predates breaks -- update it", 3)
+  end
+  return fn
+end
+
+-- Hold the action queue for `seconds` seconds (fractions allowed), starting now; replaces
+-- any break already running. schedule_break(300) is a five-minute break. The agent counts
+-- in milliseconds, so the value is rounded to the nearest ms before it is sent; a value out
+-- of range raises and nothing is sent. The agent then publishes break_started, and
+-- break_ended when the break ends or :interrupt_break() is called.
+function Game:schedule_break(seconds)
+  local ms = Game.break_duration_ms(seconds)
+  local ok, err = break_fn("schedule_break")(host(self), ms)
+  if not ok then error("botwithus: schedule_break failed: " .. tostring(err), 2) end
+end
+
+-- End the running break early.
+function Game:interrupt_break()
+  local ok, err = break_fn("interrupt_break")(host(self))
+  if not ok then error("botwithus: interrupt_break failed: " .. tostring(err), 2) end
 end
 
 return Game

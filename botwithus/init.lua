@@ -16,6 +16,8 @@ M.Actions  = require("botwithus.actions")
 M.Game     = require("botwithus.game")
 M.Entities = require("botwithus.entities")
 M.Input    = require("botwithus.input")
+-- Agent event decoding (Game:poll_events): see botwithus/events.lua.
+M.Events   = require("botwithus.events")
 
 -- Client management for a management script: bot.clients.new() (see botwithus/clients.lua).
 M.clients  = require("botwithus.clients")

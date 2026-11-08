@@ -1,7 +1,8 @@
 # lua-scripting-framework
 
 The **Lua scripting API** for BotWithUs — an ergonomic, author-facing library for writing
-game scripts in Lua. It is open source (MIT).
+game scripts in Lua. It is open source (MIT) and targets **Lua 5.4** (the version the native
+host embeds); LuaJIT and Lua 5.1-5.3 are not supported.
 
 Scripts run inside the native hybrid host (`native-scripting-host`), which embeds a Lua
 interpreter and installs one global, `bwu` — a flat surface onto the game (snapshot reads,
@@ -12,6 +13,8 @@ read like game logic rather than wire calls. The same surface backs the Python A
 ```lua
 local bot = require("botwithus")
 
+local TREE = 1276   -- loc TREE: trees are scenery objects, not NPCs
+
 local script = { manifest = { name = "Woodcutter", author = "you", version = "1.0" } }
 
 function script.on_start(ctx)
@@ -21,18 +24,22 @@ end
 -- return a delay in SERVER TICKS, or a negative number to stop
 function script.on_loop(ctx)
   local me   = ctx.game:self()
-  local tree = bot.npcs(ctx.game):of_type(1234):nearest(me.tile)
+  local tree = bot.objects(ctx.game):of_type(TREE):nearest(me.tile)
   if not tree then return -1 end
-  if me.tile:distance(tree.tile) > 1 then
-    ctx.game:walk_to(tree.tile.x, tree.tile.y)
-  end
-  return 1
+  -- object option 1 ("Chop down"): p1 = loc id, p2 / p3 = its tile. Like a click, it makes
+  -- the client walk the player to the tree first.
+  ctx.game:do_action({ id = 3, p1 = tree.id, p2 = tree.tile.x, p3 = tree.tile.y })
+  return 5
 end
 
-bot.run(script)
+-- Run directly (the host calls the file with no arguments), it runs itself; a loader that
+-- calls the file with an argument, as `require` does, just gets the table.
+if select("#", ...) == 0 then bot.run(script) end
+return script
 ```
 
-Run it: `bwu_host --lua examples/woodcutter.lua` (see `native-scripting-host`).
+Run it: `bwu_host --lua examples/woodcutter.lua` (see `native-scripting-host`). A script file
+**returns its script table**, so a script loader can list it without running it.
 
 ## The lifecycle
 
@@ -75,13 +82,14 @@ gives you `sleep_ticks`, not a millisecond timer, on purpose.
 
 | Module | What it gives you |
 |---|---|
-| `botwithus` | umbrella: `run`, `npcs`, `players`, `objects`, `Game`, `Tile`, `Actions`, `Input`, `clients`, `Variables` |
-| `botwithus.game` | `Game.attach()`, `:self()`, `:npcs()`, `:players()`, `:objects()` (visible scenery with `shape` / `rotation` / `resolved_id`), `:open_ifaces()` (each open interface's `type` / `client_opened` / `is_modal`, plus the table total) / `:is_interface_open()` / `:modal_ifaces()` / `:is_modal_open()`, `:clocks()`, `:walk_to()` (one hop), `:path()` (query), `:walk()` (full pathed walk that executes transitions), `:walk_cancel()`, `:queue_actions()` (one round trip), `:varc_int()` / `:varc_string()`, `:read_varp(s)` / `:read_varbit(s)` / `:varp_state()` / `:varp()` / `:varp_long()` / `:varbit()`, `:overhead_text(kind, index)` / `:headbars(kind, index)` / `:hint_arrows()` (each nil, code on refusal). Player and self rows carry `server_tile` beside the visual `tile` |
+| `botwithus` | umbrella: `run`, `npcs`, `players`, `objects`, `Game`, `Tile`, `Actions`, `Events`, `Input`, `clients`, `Variables` |
+| `botwithus.game` | `Game.attach()`, `:self()`, `:npcs()`, `:players()`, `:objects()` (visible scenery with `shape` / `rotation` / `resolved_id`), `:open_ifaces()` (each open interface's `type` / `client_opened` / `is_modal`, plus the table total) / `:is_interface_open()` / `:modal_ifaces()` / `:is_modal_open()`, `:clocks()`, `:walk_to()` (one hop), `:path()` (query), `:walk()` (full pathed walk that executes transitions), `:walk_cancel()`, `:queue_actions()` / `:try_queue_actions()` (one round trip, all or nothing), `:poll_events()`, `:schedule_break(seconds)` / `:interrupt_break()`, `:varc_int()` / `:varc_string()`, `:read_varp(s)` / `:read_varbit(s)` / `:varp_state()` / `:varp()` / `:varp_long()` / `:varbit()`, `:overhead_text(kind, index)` / `:headbars(kind, index)` / `:hint_arrows()` (each nil, code on refusal). Player and self rows carry `server_tile` beside the visual `tile` |
 | `botwithus.variables` | the varp state names (`SET`, `DEFAULT`, `NO_SUCH_VARP`, `UNAVAILABLE`) |
 | `botwithus.entities` | fluent queries: `:of_type()`, `:within()`, `:where()`, `:nearest()`, `:all()` |
 | `botwithus.clients` | client management: `clients.new()` -> `:accounts()`, `:launch()` (-> `:wait_attached()`), `:stop()`, `:clients()`, `:attach()` (once per process), events via `:poll()` / `:pump()` / `:wait_for()` / `:on()`, `:on_close_requested()` and `:ack_close()`. See [docs/CLIENTS.md](docs/CLIENTS.md) |
 | `botwithus.tile` | `Tile` with Chebyshev (8-directional) distance |
-| `botwithus.actions` | action ids + builders (`walk_to`, `component_click`, …) |
+| `botwithus.actions` | action ids + builders: `walk_to(x, y)`, `component_click(iface, comp [, option = 1 [, sub_slot = -1]])`, `dialogue_option(iface, comp)` |
+| `botwithus.events` | agent event decoding for `Game:poll_events()`: `action_refused` (`reason_name` `no_target` / `anchor_timeout` / `no_opener`, `anchor_name`, `held_ms`) and `action_executed`; other types pass through as raw `{ type, body }` |
 | `botwithus.input` | the game's input dialog: `Input.dialog(game)` with `:mode()`, `:is_open()`, `:text()`, `:enter_amount(3 \| "10k")` / `:enter_text(name)` (type and submit), `:submit()`, `:cancel()`, `:backspace(n)`, `:clear()` (false when the dialog is closed or in the wrong mode; text it would reject raises before anything is sent). Low level: `KeyStroke` with `ENTER` / `BACKSPACE` / `ESCAPE`, `fire_keys`, `type_text`, `component_trigger` |
 
 ## Managing clients
@@ -100,6 +108,42 @@ Lua scripts have one thread, so events are read with `cm:poll()` / `cm:pump()` /
 `cm:wait_for()`, and handlers run only inside those calls. With no close handler, nothing is
 answered and the script keeps running. See [docs/CLIENTS.md](docs/CLIENTS.md) and
 `examples/manager.lua`.
+
+## Queueing actions: all or nothing
+
+`ctx.game:queue_actions(list)` sends up to `bwu.MAX_ACTION_BATCH` actions in one round trip.
+The agent queues **every** action or **none**: it refuses the whole batch (`batch_too_large`,
+`queue_full`, `action_id_required`, `bad_param`) rather than queueing part of it. On success
+it returns `#list`; otherwise it raises, and the error says plainly whether anything was
+queued. `:try_queue_actions(list)` does not raise:
+
+```lua
+local n, msg, outcome = ctx.game:try_queue_actions(list)
+if n then ...                                   -- all #list queued
+elseif outcome == bot.Game.QUEUED_NONE then ... -- refused: nothing queued, safe to retry
+else ... end                                    -- QUEUED_UNKNOWN (timeout, pipe gone): check first
+```
+
+The host tells the two failures apart (`"refused"` or `"unknown"`). On a `bwu_host` too old to
+say, a failure counts as `QUEUED_NONE` only when the message names one of the agent's refusal
+codes, and as `QUEUED_UNKNOWN` otherwise. An agent from before all-or-nothing could queue a
+prefix; that comes back as `QUEUED_PREFIX` with the count as a fourth value.
+
+`ctx.game:do_action(a)` queues one action and returns `true`, or `false` and the host's error
+(for example `queue_action: queue_full`).
+
+An action the agent queued can still be dropped later if its target never becomes
+clickable. `ctx.game:poll_events()` then carries an `action_refused` event with the action
+as queued, `reason_name` and how long it was held; no `action_executed` follows it.
+
+## Breaks
+
+`ctx.game:schedule_break(seconds)` holds the action queue for that many **seconds**
+(fractions allowed): `schedule_break(300)` is a five-minute break. The agent counts in
+milliseconds, so the value is rounded to the nearest millisecond; under 1 ms or over
+`Game.MAX_BREAK_SECONDS` (about 24.8 days) raises without sending. `interrupt_break()` ends
+a break early. `has_breaks()` is false on a `bwu_host` that predates them, and both calls
+then raise.
 
 ## Walking: two styles
 
@@ -186,9 +230,9 @@ scripts\run_example.ps1 examples\banker.lua   # needs bwu_host on PATH (or $env:
 No game client needed — the suite injects a fake `bwu` surface.
 
 ```powershell
-scripts\test.ps1        # finds lua/lua5.4/luajit on PATH
+scripts\test.ps1        # finds a Lua 5.4 (lua5.4, lua54 or lua) on PATH
 # or directly:
-lua spec\run.lua
+lua5.4 spec\run.lua
 # or with the host's own Lua 5.4, when no lua is installed:
 bwu_host --lua spec\run.lua
 ```

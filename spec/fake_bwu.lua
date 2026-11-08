@@ -57,7 +57,13 @@ function M.new(opts)
     open_iface_total = opts.open_iface_total,   -- nil: the row count
     actions = {},   -- recorded queue_action calls
     batches = {},   -- recorded queue_actions calls, one list per call
-    queue_accept = opts.queue_accept,  -- nil: queue_actions takes every action
+    queue_accept = opts.queue_accept,  -- nil: queue_actions takes every action (an old agent's prefix)
+    queue_error = opts.queue_error,    -- set: queue_actions returns nil, queue_error, queue_outcome
+    -- the third value: "refused" (default) or "unknown"; false plays a bwu_host without it
+    queue_outcome = opts.queue_outcome == nil and "refused" or opts.queue_outcome,
+    queue_action_error = opts.queue_action_error,  -- set: queue_action returns false, it
+    events = opts.events or {},        -- raw { type, body } records poll_events hands back once
+    breaks = {},                       -- recorded schedule_break ms / "interrupt" calls
     varcs = opts.varcs or {},                -- varc id -> int
     varc_strings = opts.varc_strings or {},  -- varc id -> string
     walks   = {},   -- recorded walk() calls (executor)
@@ -170,12 +176,19 @@ function M.new(opts)
     return out, state.open_iface_total or #out
   end
   function bwu.queue_action(_, id, p1, p2, p3)
+    if state.queue_action_error then return false, state.queue_action_error end
     state.actions[#state.actions + 1] = { id = id, p1 = p1, p2 = p2, p3 = p3 }
     return true
   end
   -- Batched queue: records every action in order (into `actions` too) and the batch
-  -- itself. `queue_accept` caps how many the fake agent takes, like a full agent queue.
+  -- itself. `queue_accept` caps how many the fake agent takes, as an agent older than
+  -- all-or-nothing queue_actions did; `queue_error` plays a refused or failed call.
   function bwu.queue_actions(_, list)
+    if state.queue_error then
+      state.batches[#state.batches + 1] = list
+      if state.queue_outcome == false then return nil, state.queue_error end
+      return nil, state.queue_error, state.queue_outcome
+    end
     local accepted = math.min(#list, state.queue_accept or #list)
     local batch = {}
     for i, a in ipairs(list) do
@@ -184,6 +197,21 @@ function M.new(opts)
     end
     state.batches[#state.batches + 1] = batch
     return accepted
+  end
+  function bwu.poll_events(_)
+    local out = state.events
+    state.events = {}
+    return out
+  end
+  if not opts.no_breaks then
+    function bwu.schedule_break(_, ms)
+      state.breaks[#state.breaks + 1] = ms
+      return true
+    end
+    function bwu.interrupt_break(_)
+      state.breaks[#state.breaks + 1] = "interrupt"
+      return true
+    end
   end
   function bwu.varc_int(_, id) return state.varcs[id] or -1 end
   function bwu.varc_string(_, id) return state.varc_strings[id] or "" end
