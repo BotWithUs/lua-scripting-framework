@@ -278,7 +278,7 @@ local function run_plugin(b, script, config, client_pid)
   loop(b, script, ctx)
   b.ctl_state("stopping")   -- a no-op when the host already reported stopping
   callback(script, "on_stop", ctx)
-  game:detach()
+  game:_end_run(true)   -- after on_stop, so on_stop still reads the last frame after an exit
 end
 
 function M.run(path, client_pid)
