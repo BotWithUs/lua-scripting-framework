@@ -55,18 +55,53 @@ local function make_wait(clients)
 end
 Script._make_wait = make_wait
 
+-- How long the server tick may stand still during a sleep before the sleep checks whether
+-- the client has exited, in milliseconds (the Python framework's sleep_ticks bound). A stall
+-- alone (the lobby, a frozen client) does not end the sleep; an exited client does: its tick
+-- stops, and the host stops listing it (see Game:_exit_check).
+local STALL_CHECK_MS = 6000
+Script.STALL_CHECK_MS = STALL_CHECK_MS
+
+-- After a stall check finds the pid unlisted, how long the sleep waits (the tick still
+-- stalled) before it looks again. The exit counts only when that second look also misses, so
+-- one discovery miss never ends a live run.
+local EXIT_CONFIRM_MS = 1000
+Script.EXIT_CONFIRM_MS = EXIT_CONFIRM_MS
+
 -- Wait until server_tick advances by n, calling wait() between polls. Returns true when it
--- did, false when the run is stopping, the game was detached meanwhile (its client exited) or
--- wait() returned false. n <= 0 returns at once.
+-- did, false when the run is stopping, wait() returned false, or the client exited. The exit
+-- is seen on any poll whose refresh fails while the host no longer lists the pid, or, when the
+-- snapshot still reads, after the tick has stood still for STALL_CHECK_MS and two looks
+-- EXIT_CONFIRM_MS apart both find the pid unlisted. The Game is then marked as exited (see
+-- Game:_exit_check). n <= 0 returns at once. The time is counted in waits of TICK_POLL_MS, as
+-- the waits are what take it.
 local function sleep_ticks(game, wait, n)
   if Ctl.stopping() then return false end
   if n <= 0 then return true end
-  if not game:refresh() and not game:is_attached() then return false end
+  if game:_client_gone() then return false end
   local start = game:server_tick()
+  local last, stalled_ms, suspect = start, 0, false
   while true do
     if not wait() then return false end
-    if not game:refresh() and not game:is_attached() then return false end
-    if game:server_tick() - start >= n then return true end
+    if game:_client_gone() then return false end
+    local now = game:server_tick()
+    if now - start >= n then return true end
+    if now ~= last then
+      last, stalled_ms, suspect = now, 0, false
+    else
+      stalled_ms = stalled_ms + TICK_POLL_MS
+      if stalled_ms >= STALL_CHECK_MS then
+        local verdict = game:_exit_check(true)
+        if verdict == "gone" then return false end
+        if verdict == "suspect" and suspect then
+          game:_mark_exited()
+          return false
+        end
+        suspect = verdict == "suspect"
+        -- A suspect is looked at again after EXIT_CONFIRM_MS; otherwise after a full bound.
+        stalled_ms = suspect and STALL_CHECK_MS - EXIT_CONFIRM_MS or 0
+      end
+    end
   end
 end
 Script._sleep_ticks = sleep_ticks
@@ -74,7 +109,7 @@ Script._sleep_ticks = sleep_ticks
 local function make_ctx(game, wait, clients)
   local ctx = { game = game, clients = clients, config = {} }
   -- Wait until server_tick advances by n. Returns true when it did, false when the run is
-  -- stopping or the game was detached meanwhile (its client exited). n <= 0 returns at once.
+  -- stopping or its client exited (see sleep_ticks above). n <= 0 returns at once.
   function ctx:sleep_ticks(n) return sleep_ticks(game, wait, n) end
   -- True once the run has been asked to stop: finish up and return from on_loop.
   function ctx:stopping() return Ctl.stopping() end
@@ -237,7 +272,7 @@ local function lifecycle(script, ctx, game, opts, progress)
   progress.phase = "on_loop"
   local iters = 0
   while not Ctl.stopping() do
-    if not game:refresh() and not game:is_attached() then break end
+    if game:_client_gone() then break end
     progress.iteration = iters + 1
     local delay = script.on_loop(ctx)
     if ends_loop(delay) then break end
@@ -254,10 +289,11 @@ end
 --   opts.clients    a botwithus.clients manager: attach through it (at most once per pid)
 --                   and wait on its events between ticks (see make_wait above)
 --   opts.client_id  with opts.clients, attach to that launched client
---   opts.game       run on a Game that is already attached; the caller keeps it
+--   opts.game       run on a Game that is already attached; the caller keeps it, unless its
+--                   client exits: then the runner releases it after on_stop
 --   opts.max_iters  bounds the loop (tests); command line only, ignored in a GUI worker
--- The loop ends when on_loop returns a negative or non-number, when the Game is detached
--- because its client exited, or when the run is stopped.
+-- The loop ends when on_loop returns a negative or non-number, when the client exits (the
+-- Game is released after on_stop, whoever owns it), or when the run is stopped.
 function Script.run(script, opts)
   opts = opts or {}
   assert(type(script.on_loop) == "function", "script needs an on_loop(ctx)")
@@ -296,7 +332,7 @@ function Script.run(script, opts)
   end
   if ok then run:state("RUNNING", "STOPPED") end
   run:close()
-  if owned then game:detach() end
+  game:_end_run(owned)
   if not ok then error(failure.err, 0) end
 end
 

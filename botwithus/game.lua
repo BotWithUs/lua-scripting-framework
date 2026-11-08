@@ -121,6 +121,63 @@ function Game:_release(reason)
   if on_detach then on_detach(self) end
 end
 
+-- Why a Game the framework released on its own stopped being attached: its client exited.
+Game.DETACHED_EXITED = "the client exited"
+
+-- Whether the host still lists `pid` as an attachable client.
+local function listed(b, pid)
+  for _, p in ipairs(b.discover_pids()) do
+    if p == pid then return true end
+  end
+  return false
+end
+
+-- The client exit checks. A Game whose client has exited is marked, not released: the run
+-- still calls on_stop with it, and reads then return the last frame. The runner releases it
+-- afterwards (Game:_end_run).
+--
+-- Game:_exit_check(stalled) looks once. It returns
+--   "gone"     the Game is detached or already marked, or its snapshot cannot be read and the
+--              host no longer lists its pid: two independent signs, so the Game is marked now
+--   "suspect"  the caller saw the server tick stand still for the stall bound (`stalled`) and
+--              the host does not list the pid. That is what an exit looks like while the host
+--              still holds a readable view of the mapping (frozen data), but one discovery
+--              can miss a live client, so the caller confirms it with a second look later
+--   nil        no sign of an exit: the snapshot reads and the tick is not stalled, or the
+--              pid is listed (a stall while listed is the lobby or a frozen client)
+-- Refreshes the snapshot as a side effect.
+function Game:_exit_check(stalled)
+  if self._exited or not self._host then return "gone" end
+  local b = surface()
+  local readable = b.refresh(self._host)
+  if readable and not stalled then return nil end
+  if listed(b, self._pid) then return nil end
+  if readable then return "suspect" end
+  self:_mark_exited()
+  return "gone"
+end
+
+-- Whether this Game's client has exited, from one look (see _exit_check). A "suspect" is not
+-- an exit here: only the runner's stall confirmation turns it into one.
+function Game:_client_gone()
+  return self:_exit_check(false) == "gone"
+end
+
+-- Record that this Game's client has exited.
+function Game:_mark_exited()
+  self._exited = true
+end
+
+-- The runner's end of a run: a Game whose client exited is released with DETACHED_EXITED
+-- (whoever owns it), otherwise it is detached when the runner owns it.
+function Game:_end_run(owned)
+  if self._exited then
+    self:_release(Game.DETACHED_EXITED)
+  elseif owned then
+    self:detach()
+  end
+end
+
 -- Pull a fresh snapshot copy for this tick. Call once at the top of a loop iter.
 -- On a detached Game it returns false, "detached", reason and touches nothing.
 function Game:refresh()

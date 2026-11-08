@@ -55,9 +55,25 @@ and `on_stop` runs. A script stuck in its own busy loop does not see the stop; a
 GUI ends the process. So wait with `ctx:sleep_ticks`, and check `ctx:stopping()` inside any
 long loop of your own. A blocking walk (`ctx.game:walk(...)`) also ends early on stop, with
 its normal "cancelled" result, and `clients` waits (`:wait_for`, `:wait_attached`) return
-`nil, "stopping"`. On the command line nothing stops a run: `ctx:stopping()` is always false.
+`nil, "stopping"`. On the command line no stop request reaches a run: `ctx:stopping()` is
+always false, and a run ends when `on_loop` ends it, it fails, or its client exits.
 
-**Changes for existing scripts on the command line.** Three things differ from earlier
+**The client exiting.** When the game client goes away, the run ends on its own, in the GUI
+and through `bot.run` alike: no further `on_loop` runs, then `on_stop` runs, and then the game
+is detached. In `on_stop` the game is still attached and its reads return the last frame,
+so it can log where the character was; actions no longer reach the client. The client counts
+as gone when the host no longer lists it **and** its snapshot cannot be read, or its server
+tick has stood still for 6 s and a second look 1 s later still does not find it. One missed
+look never ends a run, and a stalled tick while the client is listed (the lobby, a frozen
+client) is not an exit. A `ctx:sleep_ticks(n)` running when the client goes returns `false`
+(within about 7 s at most). A Game passed in as `bot.run`'s `opts.game` is released too
+when its client exits, after `on_stop`.
+
+On a plain stall `ctx:sleep_ticks(n)` keeps waiting for the ticks. This differs on purpose
+from the Python framework, whose `sleep_ticks` returns `False` after 6 s: a Lua delay is in
+ticks, and a fixed timeout would cut short any sleep longer than 10 ticks.
+
+**Changes for existing scripts on the command line.** Four things differ from earlier
 releases when a script runs through `bot.run`:
 
 - the manifest is checked before the run starts: `name`, `version`, `author`,
@@ -66,7 +82,8 @@ releases when a script runs through `bot.run`:
   0..4096 and `category` 1..64;
 - `on_config_update(ctx, config)`, when defined, is called with the defaults before
   `on_start`; if it raises, neither `on_start` nor `on_stop` runs;
-- `ctx:sleep_ticks(n)` returns a boolean (`true` when the ticks passed) instead of nothing.
+- `ctx:sleep_ticks(n)` returns a boolean (`true` when the ticks passed) instead of nothing;
+- the run ends when its client exits (see above) instead of waiting for a tick forever.
 
 ## Settings (config fields)
 

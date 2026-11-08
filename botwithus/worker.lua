@@ -235,7 +235,8 @@ end
 local function iterate(b, script, ctx, iteration, pending, sleep_wait)
   if not apply_queued_config(b, script, ctx, pending) then return false end
   if b.ctl_stopping() then return false end
-  if not ctx.game:refresh() and not ctx.game:is_attached() then return false end
+  -- The client exited: its snapshot is unreadable and the host no longer lists it.
+  if ctx.game:_client_gone() then return false end
   local ok, delay = try(script.on_loop, ctx)
   if not ok then
     crash(PHASE_ON_LOOP, delay.report, iteration)
@@ -277,7 +278,7 @@ local function run_plugin(b, script, config, client_pid)
   loop(b, script, ctx)
   b.ctl_state("stopping")   -- a no-op when the host already reported stopping
   callback(script, "on_stop", ctx)
-  game:detach()
+  game:_end_run(true)   -- after on_stop, so on_stop still reads the last frame after an exit
 end
 
 function M.run(path, client_pid)

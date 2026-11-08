@@ -672,6 +672,241 @@ T["examples: the worker describes woodcutter and banker as plugins, manager as s
   end
 end
 
+-- client exit -------------------------------------------------------------------------------
+-- The fake's server tick advances only in refresh, so a refresh that no longer counts stands
+-- for a client whose tick has stopped. `exit_client(b, opts)` plays the client going away:
+--   opts.readable  the snapshot still reads (frozen): what the host does after a real exit,
+--                  as it keeps its own view of the mapping until detach
+--   opts.listed    the host still lists the pid (a stall, not an exit); or a function of the
+--                  discovery's 1-based count, for a list that misses the pid only sometimes
+-- Every wait past EXIT_GUARD turns into a GUI stop, so a regression fails instead of hanging.
+local EXIT_GUARD = 1000
+local STALL_WAITS = Script.STALL_CHECK_MS // Script.TICK_POLL_MS
+local EXIT_WAITS  = STALL_WAITS                                  -- the stall, then the confirmation
+                    + -(-Script.EXIT_CONFIRM_MS // Script.TICK_POLL_MS)
+local function exit_client(b, opts)
+  b._discovers = 0
+  b.refresh = function() return opts.readable == true end
+  b.discover_pids = function()
+    b._discovers = b._discovers + 1
+    local listed = opts.listed
+    if type(listed) == "function" then listed = listed(b._discovers) end
+    return listed and { CLIENT_PID } or {}
+  end
+  local base_wait = b.ctl_wait
+  b.ctl_wait = function(ms)
+    if #b._ctl.waits + 1 >= EXIT_GUARD then b._ctl.stop() end
+    return base_wait(ms)
+  end
+end
+
+-- A plugin whose client goes away during its first on_loop, which then asks for a long sleep.
+-- Its on_stop probes the game (p.stop_probe): the reviewer's case of on_stop reading after an
+-- exit. A read that raised would be an on_stop crash.
+local function exiting_plugin(opts, on_loop)
+  local p
+  p = plugin({
+    on_stop = function(ctx)
+      p.stop_probe = { tick = ctx.game:server_tick(), attached = ctx.game:is_attached(),
+                       detaches = #_G.bwu._state.detaches }
+    end,
+    on_loop = function(ctx, n)
+      if n == 1 then exit_client(_G.bwu, opts) end
+      if n > 50 then _G.bwu._ctl.stop() end     -- guard: a loop that no longer sleeps
+      if on_loop then return on_loop(ctx, n) end
+      return 1000
+    end,
+  })
+  return p
+end
+
+-- The run ended on its own because the client exited: the framework reported stopping, the
+-- GUI never stopped it, on_stop ran once after the one on_loop, the Game was detached once.
+local function assert_ended_for_exit(assert_, b, p)
+  assert_(not b._ctl.host_stopped, "ended by the exit, not by the guard's stop ("
+          .. #b._ctl.waits .. " waits)")
+  assert_(table.concat(b._ctl.states, ",") == "attaching,running,stopping",
+          "states: " .. table.concat(b._ctl.states, ","))
+  assert_(names(p.calls) == "on_config_update,on_start,on_loop,on_stop", "calls: " .. names(p.calls))
+  assert_(#crashes(b) == 0, "an exit is not a crash")
+  assert_(#b._state.detaches == 1 and b._state.detaches[1] == CLIENT_PID, "detached once")
+  local probe = p.stop_probe
+  assert_(probe and math.type(probe.tick) == "integer", "on_stop read server_tick")
+  assert_(probe.attached and probe.detaches == 0, "still attached in on_stop, released after it")
+end
+
+T["run: the client exiting (snapshot unreadable, pid unlisted) ends the run stopped"] = function(assert_)
+  local p = exiting_plugin({ readable = false, listed = false })
+  local b = run_plugin(p)
+  assert_ended_for_exit(assert_, b, p)
+  assert_(#b._ctl.waits <= 1, "within one poll: " .. #b._ctl.waits .. " waits")
+end
+
+T["run: the client exiting (snapshot frozen but readable, pid unlisted) ends the run stopped"] = function(assert_)
+  local p = exiting_plugin({ readable = true, listed = false })
+  local b = run_plugin(p)
+  assert_ended_for_exit(assert_, b, p)
+  assert_(#b._ctl.waits > STALL_WAITS and #b._ctl.waits <= EXIT_WAITS,
+          "after the 6 s stall and the 1 s confirmation: " .. #b._ctl.waits .. " waits")
+  assert_(b._discovers == 2, "two looks, both missed: " .. b._discovers)
+end
+
+T["run: a stalled tick with the pid still listed keeps the run going"] = function(assert_)
+  local p = exiting_plugin({ readable = true, listed = true })
+  local b = run_plugin(p)
+  assert_(b._ctl.host_stopped and #b._ctl.waits >= EXIT_GUARD, "ran until the GUI stop: "
+          .. #b._ctl.waits .. " waits")
+  assert_(b._discovers >= 2, "the exit check ran at each bound: " .. b._discovers)
+  assert_(names(p.calls) == "on_config_update,on_start,on_loop,on_stop",
+          "one long sleep, not an early on_loop: " .. names(p.calls))
+  assert_(#crashes(b) == 0 and #b._state.detaches == 1, "a stop, then detached")
+end
+
+T["run: a failed refresh with the pid unlisted mid-sleep ends the run within one poll"] = function(assert_)
+  local EXIT_AT = 5
+  local p = plugin({
+    on_start = function()
+      local b = _G.bwu
+      local base_wait = b.ctl_wait
+      b.ctl_wait = function(ms)
+        if #b._ctl.waits + 1 == EXIT_AT then exit_client(b, { readable = false, listed = false }) end
+        if #b._ctl.waits + 1 >= EXIT_GUARD then b._ctl.stop() end
+        return base_wait(ms)
+      end
+    end,
+    on_loop = function(_, n)
+      if n > 50 then _G.bwu._ctl.stop() end     -- guard: a loop that no longer sleeps
+      return 1000
+    end,
+  })
+  local b = run_plugin(p)
+  assert_(not b._ctl.host_stopped, "ended by the exit (" .. #b._ctl.waits .. " waits)")
+  assert_(#b._ctl.waits == EXIT_AT, "on the poll after the exit: " .. #b._ctl.waits .. " waits")
+  assert_(names(p.calls) == "on_config_update,on_start,on_loop,on_stop", "calls: " .. names(p.calls))
+  assert_(#crashes(b) == 0 and #b._state.detaches == 1, "stopped, detached once")
+end
+
+T["run: one discovery miss during a stalled tick keeps the run going"] = function(assert_)
+  local p = exiting_plugin({ readable = true, listed = function(n) return n ~= 1 end })
+  local b = run_plugin(p)
+  assert_(b._ctl.host_stopped and #b._ctl.waits >= EXIT_GUARD, "ran until the GUI stop: "
+          .. #b._ctl.waits .. " waits")
+  assert_(b._discovers >= 3, "missed once, then found, and looked again: " .. b._discovers)
+  assert_(names(p.calls) == "on_config_update,on_start,on_loop,on_stop", "calls: " .. names(p.calls))
+  assert_(#crashes(b) == 0, "no crash")
+end
+
+T["run: two discovery misses a second apart during a stalled tick end the run"] = function(assert_)
+  local p = exiting_plugin({ readable = true, listed = function(n) return n >= 3 end })
+  local b = run_plugin(p)
+  assert_ended_for_exit(assert_, b, p)
+  assert_(b._discovers == 2, "ended on the second miss: " .. b._discovers)
+end
+
+T["run: a tick that advances between two misses starts the confirmation over"] = function(assert_)
+  local p = exiting_plugin({ readable = true, listed = function(n)
+    if n == 1 then _G.bwu._state.tick = _G.bwu._state.tick + 1 end   -- the tick moves once
+    return n > 2
+  end })
+  local b = run_plugin(p)
+  assert_(b._ctl.host_stopped and #b._ctl.waits >= EXIT_GUARD, "ran until the GUI stop: "
+          .. #b._ctl.waits .. " waits")
+  assert_(names(p.calls) == "on_config_update,on_start,on_loop,on_stop", "calls: " .. names(p.calls))
+end
+
+T["run: an unreadable snapshot with the pid still listed keeps the run going"] = function(assert_)
+  local p = exiting_plugin({ readable = false, listed = true })
+  local b = run_plugin(p)
+  assert_(b._ctl.host_stopped and #b._ctl.waits >= EXIT_GUARD, "ran until the GUI stop: "
+          .. #b._ctl.waits .. " waits")
+  assert_(names(p.calls) == "on_config_update,on_start,on_loop,on_stop", "calls: " .. names(p.calls))
+end
+
+T["run: a slow tick that keeps advancing never runs the exit check"] = function(assert_)
+  local slept
+  local p = plugin({
+    on_loop = function(ctx, n)
+      if n > 1 then return -1 end
+      local b = _G.bwu
+      exit_client(b, { readable = true, listed = false })
+      local tick, polls = b.clocks(nil).server_tick, 0
+      local every = STALL_WAITS // 2                  -- one tick per half the bound
+      b.refresh = function()
+        polls = polls + 1
+        if polls % every == 0 then tick = tick + 1 end
+        return true
+      end
+      b.clocks = function() return { server_tick = tick, game_cycle = 0, publish_seq = 0 } end
+      slept = ctx:sleep_ticks(4)                     -- twice the bound in all
+      return -1
+    end,
+  })
+  local b = run_plugin(p)
+  assert_(slept == true, "the ticks passed: " .. tostring(slept))
+  assert_(b._discovers == 0, "no exit check while the tick advances: " .. b._discovers)
+  assert_(#b._ctl.waits > STALL_WAITS, "the sleep outlasted one bound: " .. #b._ctl.waits)
+end
+
+T["run: ctx:sleep_ticks returns false when the client exits"] = function(assert_)
+  local slept
+  local p = exiting_plugin({ readable = true, listed = false }, function(ctx)
+    slept = ctx:sleep_ticks(1000)
+    return 1
+  end)
+  local b = run_plugin(p)
+  assert_(slept == false, "false, not the ticks passing: " .. tostring(slept))
+  assert_ended_for_exit(assert_, b, p)
+end
+
+T["bot.run on the command line ends when its client exits"] = function(assert_)
+  local b = setup({ mode = "cli" })
+  local calls = {}
+  local guard = 0
+  local base_wait = b.ctl_wait
+  local ok, err = pcall(Script.run, {
+    manifest = { name = "Cli" },
+    on_loop = function()
+      calls[#calls + 1] = "on_loop"
+      if #calls > 50 then error("guard: the loop never ended", 0) end
+      if #calls == 1 then exit_client(b, { readable = true, listed = false }) end
+      b.ctl_wait = function(ms)   -- a command line has no GUI stop: the guard raises
+        guard = guard + 1
+        if guard >= EXIT_GUARD then error("guard: the sleep never ended", 0) end
+        return base_wait(ms)
+      end
+      return 1000
+    end,
+    on_stop = function() calls[#calls + 1] = "on_stop" end,
+  }, { pid = CLIENT_PID })
+  assert_(ok, "bot.run returned: " .. tostring(err))
+  assert_(table.concat(calls, ",") == "on_loop,on_stop", "calls: " .. table.concat(calls, ","))
+  assert_(guard <= EXIT_WAITS, "within the bound: " .. guard .. " waits")
+  assert_(#b._state.detaches == 1 and b._state.detaches[1] == CLIENT_PID, "detached once")
+end
+
+T["bot.run releases a Game passed in when its client exits, after on_stop"] = function(assert_)
+  local b = setup({ mode = "cli" })
+  local Game = require("botwithus.game")
+  local game = Game.attach(CLIENT_PID)
+  local seen
+  local loops = 0
+  local ok, err = pcall(Script.run, {
+    manifest = { name = "Held" },
+    on_loop = function()
+      loops = loops + 1
+      if loops > 50 then error("guard: the loop never ended", 0) end
+      if loops == 1 then exit_client(b, { readable = false, listed = false }) end
+      return 1000
+    end,
+    on_stop = function(ctx) seen = { ctx.game:server_tick(), ctx.game:is_attached() } end,
+  }, { game = game })
+  assert_(ok, "bot.run returned: " .. tostring(err))
+  assert_(seen and math.type(seen[1]) == "integer" and seen[2] == true, "on_stop read the last frame")
+  local attached, why = game:is_attached()
+  assert_(not attached and why == Game.DETACHED_EXITED, "released as exited: " .. tostring(why))
+  assert_(#b._state.detaches == 1, "detached once")
+end
+
 -- helpers exposed to the specs --------------------------------------------------------------
 
 T["the worker's tick poll is within the stop latency"] = function(assert_)
