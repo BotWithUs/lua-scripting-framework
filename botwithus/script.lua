@@ -130,10 +130,22 @@ function RunLog:state(from, to)
   if self.b and self.b.runlog_crumb then self.b.runlog_crumb("state", from .. "->" .. to) end
 end
 
+-- Surfaces whose run log already holds a crash block written by this framework. A GUI worker
+-- has one surface and one run, so this tells the worker that a self-run's bot.run already
+-- reported the failure it is about to see.
+local crash_written = setmetatable({}, { __mode = "k" })
+
+function Script._crash_written()
+  local b = rawget(_G, "bwu")
+  return b ~= nil and crash_written[b] == true
+end
+
 -- Write the crash block; a run keeps only its first, so a later failure becomes an ERROR line.
 function RunLog:crash(phase, iteration, report)
   if not self.b then return end
-  if not self.b.runlog_crash({ phase = phase, iteration = iteration, report = report }) then
+  if self.b.runlog_crash({ phase = phase, iteration = iteration, report = report }) then
+    crash_written[self.b] = true
+  else
     self.b.runlog_write(self.b.LOG_ERROR, "botwithus.script", phase .. " failed: " .. report)
   end
 end
@@ -263,7 +275,9 @@ function Script.run(script, opts)
     run:state("RUNNING", "ERROR")
     run:crash(progress.phase, progress.phase == "on_loop" and progress.iteration or 0, failure.report)
   end
-  if script.on_stop then
+  -- on_stop pairs with on_start: a failure in the initial on_config_update skips both.
+  local started = ok or progress.phase ~= "on_config_update"
+  if script.on_stop and started then
     local stopped, stop_failure = xpcall(script.on_stop, capture, ctx)
     if not stopped then run:crash("on_stop", 0, stop_failure.report) end
   end

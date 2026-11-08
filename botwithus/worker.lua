@@ -23,6 +23,7 @@
 -- block, which the host turns into the run's outcome. Both return only when the script is done.
 
 local Config = require("botwithus.config")
+local Ctl    = require("botwithus.ctl")
 local Game   = require("botwithus.game")
 local Script = require("botwithus.script")
 
@@ -60,7 +61,8 @@ end
 -- A traceback-taking message handler for xpcall.
 local capture = Script._capture
 
--- Report a failure as the run's crash block. Only the first block of a run is kept.
+-- Report a failure as the run's crash block. Only the first block of a run is kept; a later
+-- failure becomes an ERROR line.
 local function crash(phase, report, iteration)
   Script._RunLog.bound():crash(phase, iteration or 0, report)
 end
@@ -126,11 +128,14 @@ function M.describe(path)
   describe_loaded(loaded)
 end
 
--- Report a framework phase. A refused attaching / running is a framework bug, so it raises
--- (the host reports it as a host crash).
+-- Report a framework phase. Returns true, or false when the run is stopping (the GUI's stop
+-- can arrive at any moment, and the host may then refuse a later phase). Any other refusal is
+-- a framework bug, so it raises (the host reports it as a host crash).
 local function report_state(phase)
   local ok, err = surface().ctl_state(phase)
-  if not ok then error("botwithus.worker: ctl_state(" .. phase .. ") refused: " .. tostring(err), 0) end
+  if ok then return not Ctl.stopping() end
+  if Ctl.stopping() then return false end
+  error("botwithus.worker: ctl_state(" .. phase .. ") refused: " .. tostring(err), 0)
 end
 
 -- os.exit inside a self-run ends the run, not the worker: it is replaced, for the self-run's
@@ -167,6 +172,9 @@ local function self_run(path)
     end
     return
   end
+  -- A bot.run inside the self-run reports its own failure, then re-raises it here: that
+  -- failure is already the run's crash block, so it is not reported a second time.
+  if Script._crash_written() then return end
   crash(PHASE_ON_LOOP, failure.report)
 end
 
@@ -223,7 +231,7 @@ end
 
 -- Steps 4-12 of a plugin run, once described.
 local function run_plugin(b, script, config, client_pid)
-  report_state("attaching")
+  if not report_state("attaching") then return end
   local game, code, msg = Game.try_attach(client_pid)
   if not game then
     crash(PHASE_OTHER, "attach failed: " .. tostring(code) .. ": " .. tostring(msg))
@@ -238,9 +246,10 @@ local function run_plugin(b, script, config, client_pid)
     game:detach()
     return
   end
+  -- A stop during on_config_update or on_start: the loop sees it and runs no on_loop.
   report_state("running")
   loop(b, script, ctx)
-  b.ctl_state("stopping")   -- the host ignores it when it already reported stopping
+  b.ctl_state("stopping")   -- a no-op when the host already reported stopping
   callback(script, "on_stop", ctx)
   game:detach()
 end
@@ -253,7 +262,7 @@ function M.run(path, client_pid)
   if config == nil then return end
   if b.ctl_stopping() then return end
   if loaded.desc.self_running then
-    report_state("running")
+    if not report_state("running") then return end
     self_run(path)
     return
   end

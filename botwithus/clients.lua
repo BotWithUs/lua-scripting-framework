@@ -22,6 +22,7 @@
 -- framework.
 
 local Game = require("botwithus.game")
+local Ctl  = require("botwithus.ctl")
 
 local Clients = {}
 Clients.__index = Clients
@@ -355,10 +356,14 @@ end
 
 -- Handle events until pred(event) is true, and return that event. Gives up after
 -- timeout_s seconds with nil, "timeout". Every event on the way still reaches the handlers.
+-- Under the GUI, a stop ends the wait within one slice with nil, "stopping".
 -- The clock is os.time(): os.clock() counts CPU time, which stops while the script waits.
+local STOPPING_MESSAGE = "the run is stopping"
+
 function Clients:wait_for(pred, timeout_s)
   local deadline = os.time() + (timeout_s or 0)
   repeat
+    if Ctl.stopping() then return nil, "stopping", STOPPING_MESSAGE end
     local ev, code, msg = self:poll(Clients.WAIT_SLICE_MS)
     if code then return nil, code, msg end
     if ev and pred(ev) then return ev end
@@ -417,9 +422,10 @@ end
 -- Launch handle --------------------------------------------------------------------------
 
 -- Wait until the client is injected, then attach to it and return the Game. On failure:
--- nil, code, message, where code is the service's failure code, "exited", "timeout", or
--- what attaching returned.
+-- nil, code, message, where code is the service's failure code, "exited", "timeout",
+-- "stopping" (the GUI is stopping the run), or what attaching returned.
 function Launch:wait_attached(timeout_s)
+  if Ctl.stopping() then return nil, "stopping", STOPPING_MESSAGE end
   local cm, id = self._cm, self.client_id
   local b = surface()
   local function settled()

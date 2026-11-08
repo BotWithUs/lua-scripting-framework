@@ -460,8 +460,13 @@ end
 --   opts.mode              "worker" (default), "describe" or "cli"
 --   opts.stop_after_waits  set stop on the n-th ctl_wait (that wait returns "stop")
 --   opts.stopping          start with stop already set
--- b._ctl records describes, states, waits (their ms), dones and takes; b._ctl.stop() sets
--- stop, b._ctl.push(id, cfg) queues a config change.
+--   opts.refuse_after_stop ctl_state(attaching|running) after a stop returns nil, err (a
+--                          host without the stop-during-start rule), instead of a no-op
+-- b._ctl records describes, waits (their ms), dones and takes, and `states`: every state
+-- frame the worker would send, in order, including the host's own `stopping`.
+-- b._ctl.stop() plays a GUI stop: the host sets the stop flag and sends `stopping` (once).
+-- After that, ctl_state(attaching|running|stopping) is a no-op returning true.
+-- b._ctl.push(id, cfg) queues a config change.
 local Config = require("botwithus.config")
 
 local MODES = { cli = 0, worker = 1, describe = 2 }
@@ -479,9 +484,8 @@ local function check_desc(desc)
   return ok, err
 end
 
--- The legal framework-reported transitions, from the last reported phase.
+-- The legal framework-reported transitions, from the last sent phase.
 local function legal(rec, phase)
-  if phase == "stopping" then return true end
   local last = rec.states[#rec.states]
   if rec.stopped then return false end
   if phase == "attaching" then return last == nil and not rec.self_running end
@@ -498,8 +502,16 @@ function M.with_ctl(b, opts)
   b._ctl = rec
   b.CTL_CLI, b.CTL_WORKER, b.CTL_DESCRIBE = MODES.cli, MODES.worker, MODES.describe
   local mode = MODES[opts.mode or "worker"]
-  function rec.stop() rec.stopping = true end
+  function rec.stop()
+    rec.stopping = true
+    if mode == MODES.worker and not rec.stopped then
+      rec.states[#rec.states + 1] = "stopping"
+      rec.stopped, rec.host_stopped = true, true
+    end
+  end
   function rec.push(id, cfg) rec.queue[#rec.queue + 1] = { id = id, cfg = cfg } end
+  rec.stopping = false
+  if opts.stopping then rec.stop() end
 
   function b.ctl_mode() return mode end
   function b.ctl_describe(desc)
@@ -515,10 +527,21 @@ function M.with_ctl(b, opts)
   function b.ctl_state(phase)
     if type(phase) ~= "string" then error("bad argument #1 to 'ctl_state' (string expected)", 2) end
     if not PHASES[phase] then return nil, "ctl_state: unknown phase " .. phase end
+    if mode ~= MODES.worker then return true end
+    if rec.host_stopped then
+      if opts.refuse_after_stop and phase ~= "stopping" then
+        return nil, "ctl_state: illegal transition to " .. phase
+      end
+      return true   -- after the host's stopping: a no-op
+    end
+    if phase == "stopping" then
+      if not rec.stopped then rec.states[#rec.states + 1] = "stopping" end
+      rec.stopped = true
+      return true
+    end
     if not legal(rec, phase) then return nil, "ctl_state: illegal transition to " .. phase end
     rec.states[#rec.states + 1] = phase
     if phase == "running" then rec.running = true end
-    if phase == "stopping" then rec.stopped = true end
     return true
   end
   function b.ctl_wait(ms)
@@ -527,7 +550,7 @@ function M.with_ctl(b, opts)
     end
     rec.waits[#rec.waits + 1] = ms
     if mode ~= MODES.cli and opts.stop_after_waits and #rec.waits >= opts.stop_after_waits then
-      rec.stopping = true
+      rec.stop()
     end
     if mode ~= MODES.cli and rec.stopping then return "stop" end
     return "timeout"

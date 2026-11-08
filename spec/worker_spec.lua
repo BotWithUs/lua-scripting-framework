@@ -332,8 +332,58 @@ end
 T["run: a stop before attach returns without reporting a phase"] = function(assert_)
   local p = plugin()
   local b = run_plugin(p, { stopping = true })
-  assert_(#b._ctl.describes == 1 and #b._ctl.states == 0 and #b._state.attaches == 0, "described only")
+  assert_(#b._ctl.describes == 1 and #b._state.attaches == 0, "described only")
+  assert_(table.concat(b._ctl.states, ",") == "stopping", "only the host's stopping: "
+          .. table.concat(b._ctl.states, ","))
   assert_(#p.calls == 0, "no callback")
+end
+
+-- A GUI stop while on_start runs: the host has already sent stopping, so the framework's
+-- ctl_state("running") is a no-op. The run must still end through on_stop and detach.
+local function stop_in_on_start(ctl_opts)
+  local p = plugin({ on_start = function() _G.bwu._ctl.stop() end })
+  return p, run_plugin(p, ctl_opts)
+end
+
+T["run: a stop during on_start runs on_stop, detaches and ends stopped"] = function(assert_)
+  local p, b = stop_in_on_start()
+  assert_(names(p.calls) == "on_config_update,on_start,on_stop", "no on_loop: " .. names(p.calls))
+  assert_(b._state.detaches[1] == CLIENT_PID, "detached")
+  assert_(table.concat(b._ctl.states, ",") == "attaching,stopping", "states: " .. table.concat(b._ctl.states, ","))
+  assert_(#crashes(b) == 0, "stopped, not crashed")
+end
+
+T["run: a host that refuses running after a stop is treated as the stop"] = function(assert_)
+  local p, b = stop_in_on_start({ refuse_after_stop = true })
+  assert_(names(p.calls) == "on_config_update,on_start,on_stop", "no on_loop: " .. names(p.calls))
+  assert_(b._state.detaches[1] == CLIENT_PID, "detached")
+  assert_(#crashes(b) == 0, "stopped, not crashed")
+end
+
+T["run: a stop during the initial on_config_update still pairs on_start with on_stop"] = function(assert_)
+  local p = plugin({ on_config_update = function() _G.bwu._ctl.stop() end })
+  local b = run_plugin(p)
+  assert_(names(p.calls) == "on_config_update,on_start,on_stop", "callbacks: " .. names(p.calls))
+  assert_(b._state.detaches[1] == CLIENT_PID and #crashes(b) == 0, "detached, stopped")
+end
+
+T["run: a stop during a queued on_config_update runs no further on_loop"] = function(assert_)
+  local updates = 0
+  local p = plugin({
+    on_config_update = function()
+      updates = updates + 1
+      if updates == 2 then _G.bwu._ctl.stop() end
+    end,
+    on_loop = function(_, n)
+      if n == 1 then _G.bwu._ctl.push(4, { logs = 3, tree = "oak" }) end
+      return 0
+    end,
+  })
+  local b = run_plugin(p)
+  assert_(names(p.calls) == "on_config_update,on_start,on_loop,on_config_update,on_stop",
+          "callbacks: " .. names(p.calls))
+  assert_(b._ctl.dones[1] and b._ctl.dones[1].ok, "the update is still acked")
+  assert_(#crashes(b) == 0, "stopped, not crashed")
 end
 
 T["run: an invalid schema returns without running"] = function(assert_)
@@ -409,7 +459,43 @@ T["run: bot.run in a worker self-run ignores max_iters with one info line"] = fu
   assert_(#crashes(b) == 0, "stopped cleanly")
 end
 
+T["run: a self-run whose bot.run crashed writes one crash block, no ERROR line"] = function(assert_)
+  local b = setup()
+  _G.FIXTURE_SELF_RUN = function()
+    require("botwithus").run({ manifest = { name = "S" }, on_loop = function() error("inner broke") end })
+  end
+  worker.run(fixture("plugin"), CLIENT_PID)
+  assert_(#crashes(b) == 1 and crashes(b)[1].phase == "on_loop" and crashes(b)[1].iteration == 1,
+          "the one block is bot.run's: " .. #crashes(b))
+  for _, w in ipairs(b._runlog.writes) do
+    assert_(w.level ~= b.LOG_ERROR, "no ERROR line: " .. tostring(w.msg))
+  end
+end
+
+T["clients: wait_for and wait_attached return nil, stopping once the run is stopping"] = function(assert_)
+  local b = setup()
+  local cm = require("botwithus").clients.new()
+  local h = cm:launch("acct-1")
+  b._ctl.stop()
+  local ev, code = cm:wait_for(function() return true end, 5)
+  assert_(ev == nil and code == "stopping", "wait_for: " .. tostring(code))
+  local game, code2 = h:wait_attached(5)
+  assert_(game == nil and code2 == "stopping", "wait_attached: " .. tostring(code2))
+  assert_(#b._state.attaches == 0, "nothing attached")
+  assert_(require("botwithus").stopping() == true, "bot.stopping()")
+end
+
 -- bot.run on the command line ---------------------------------------------------------------
+
+T["bot.run (CLI): an initial on_config_update error skips on_start and on_stop"] = function(assert_)
+  local b = setup({ mode = "cli" })
+  local p = plugin({ on_config_update = function() error("config broke") end })
+  local ok, err = pcall(require("botwithus").run, p, { max_iters = 1 })
+  assert_(not ok and tostring(err):find("config broke", 1, true), "re-raised: " .. tostring(err))
+  assert_(names(p.calls) == "on_config_update", "nothing else ran: " .. names(p.calls))
+  assert_(crashes(b)[1].phase == "on_config_update", "crash phase on_config_update")
+  assert_(b._state.detaches[1] == 4242, "detached")
+end
 
 T["bot.run (CLI): on_config_update gets the defaults before on_start"] = function(assert_)
   local b = setup({ mode = "cli" })

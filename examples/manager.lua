@@ -53,24 +53,37 @@ local function main()
     if code ~= "rate_limited" then fail("launch", code, msg) end
     print(("manager: rate limited, retrying in %d ms"):format(retry))
     local wait_until = os.time() + math.ceil(retry / 1000)
-    while os.time() < wait_until do cm:pump(bot.clients.WAIT_SLICE_MS) end
+    while os.time() < wait_until do
+      -- Under the GUI, a stop ends the script: nothing was launched yet.
+      if bot.stopping() then print("manager: stopped before launching"); return end
+      cm:pump(bot.clients.WAIT_SLICE_MS)
+    end
   end
   print("manager: launched " .. launch.client_id)
 
+  local mode = os.getenv("BWU_STOP") or "graceful"
+  local ok
+
   local game
   game, code, msg = launch:wait_attached(300)
+  if code == "stopping" then
+    -- Stopped by the GUI while the client started: stop the client this script launched.
+    print("manager: stopped; stopping " .. launch.client_id)
+    cm:stop(launch.client_id, mode)
+    return
+  end
   if not game then fail("attach", code, msg) end
   game:refresh()
   print(("manager: attached to pid %d, server tick %d"):format(game:pid(), game:server_tick()))
 
-  local mode = os.getenv("BWU_STOP") or "graceful"
-  local ok
   ok, code, msg = cm:stop(launch.client_id, mode)
   if not ok then fail("stop", code, msg) end
 
-  local exited = cm:wait_for(function(ev)
+  local exited
+  exited, code = cm:wait_for(function(ev)
     return ev.name == "client_exited" and ev.client_id == launch.client_id
   end, 120)
+  if code == "stopping" then print("manager: stopped while the client exits"); return end
   print(("manager: %s %s; game attached: %s"):format(launch.client_id,
     exited and ("exited (" .. tostring(exited.reason_name) .. ")") or "did not exit in time",
     tostring(game:is_attached())))

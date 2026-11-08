@@ -53,7 +53,20 @@ Only `on_loop` is required.
 returns `false` at once (it returns `true` when the ticks passed), no further `on_loop` runs,
 and `on_stop` runs. A script stuck in its own busy loop does not see the stop; after 10 s the
 GUI ends the process. So wait with `ctx:sleep_ticks`, and check `ctx:stopping()` inside any
-long loop of your own. On the command line nothing stops a run and both behave as before.
+long loop of your own. A blocking walk (`ctx.game:walk(...)`) also ends early on stop, with
+its normal "cancelled" result, and `clients` waits (`:wait_for`, `:wait_attached`) return
+`nil, "stopping"`. On the command line nothing stops a run: `ctx:stopping()` is always false.
+
+**Changes for existing scripts on the command line.** Three things differ from earlier
+releases when a script runs through `bot.run`:
+
+- the manifest is checked before the run starts: `name`, `version`, `author`,
+  `description` and `category` must be strings when set (a numeric `version = 1.0` is now
+  refused), in bytes `name` 1..128, `version` 1..64, `author` 0..128, `description`
+  0..4096 and `category` 1..64;
+- `on_config_update(ctx, config)`, when defined, is called with the defaults before
+  `on_start`; if it raises, neither `on_start` nor `on_stop` runs;
+- `ctx:sleep_ticks(n)` returns a boolean (`true` when the ticks passed) instead of nothing.
 
 ## Settings (config fields)
 
@@ -104,10 +117,13 @@ pick. To list a script it **loads the file** as `chunk(modname, path)`, so:
   with no settings, and runs it like the command line does, with zero arguments. Its
   `Game.attach()` / `bot.run` attach to the client the GUI picked. Inside a GUI run, `bot.run`
   ignores `max_iters` (with one info line in the log) and runs until `on_loop` ends it, the
-  client exits or the GUI stops it.
+  client exits or the GUI stops it. A self-running script that loops on its own should
+  check `bot.stopping()` (true once the GUI stops the run) and finish up.
 
 The script's own folder is put first on `package.path`, so a script can `require` the
 files beside it (`require("helpers")` finds `helpers.lua` or `helpers/init.lua` next to it).
+Lua separates `package.path` entries with `;`, so this does not work from a folder whose
+name contains `;`.
 
 Loading a file to list it runs its top level, so keep the self-run under
 `if select("#", ...) == 0 then ... end`, as every example does. Attaching to a client while the
@@ -152,7 +168,7 @@ gives you `sleep_ticks`, not a millisecond timer, on purpose.
 
 | Module | What it gives you |
 |---|---|
-| `botwithus` | umbrella: `run`, `npcs`, `players`, `objects`, `Game`, `Tile`, `Actions`, `Events`, `Input`, `clients`, `Variables` |
+| `botwithus` | umbrella: `run`, `stopping`, `npcs`, `players`, `objects`, `Game`, `Tile`, `Actions`, `Events`, `Input`, `clients`, `Variables` |
 | `botwithus.game` | `Game.attach()`, `:self()`, `:npcs()`, `:players()`, `:objects()` (visible scenery with `shape` / `rotation` / `resolved_id`), `:open_ifaces()` (each open interface's `type` / `client_opened` / `is_modal`, plus the table total) / `:is_interface_open()` / `:modal_ifaces()` / `:is_modal_open()`, `:clocks()`, `:walk_to()` (one hop), `:path()` (query), `:walk()` (full pathed walk that executes transitions), `:walk_cancel()`, `:queue_actions()` / `:try_queue_actions()` (one round trip, all or nothing), `:poll_events()`, `:schedule_break(seconds)` / `:interrupt_break()`, `:varc_int()` / `:varc_string()`, `:read_varp(s)` / `:read_varbit(s)` / `:varp_state()` / `:varp()` / `:varp_long()` / `:varbit()`, `:overhead_text(kind, index)` / `:headbars(kind, index)` / `:hint_arrows()` (each nil, code on refusal). Player and self rows carry `server_tile` beside the visual `tile` |
 | `botwithus.config` | settings fields: `int_field`, `string_field`, `bool_field`, `choice_field`, `item_id_field`, plus `validate_fields`, `validate_manifest`, `defaults` |
 | `botwithus.worker` | the GUI's entry points (`describe`, `run`); called by the host, not by scripts |

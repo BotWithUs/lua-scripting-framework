@@ -8,7 +8,8 @@
 --   label        1..128 bytes
 --   default      a valid value for the field (see below)
 --   description  optional tooltip, 1..1024 bytes
---   int:     min / max (optional, within int32, min <= max), step (optional, >= 1; a UI hint)
+--   int:     min / max (optional, within int32, min <= max), step (optional, 1..2147483647;
+--            a UI hint)
 --   string:  max_len (optional, 1..4096, default 256)
 --   choice:  options, a sequence of 1..64 distinct strings of 1..128 bytes
 --
@@ -21,8 +22,11 @@
 -- default must be one of its options, a choice needs at least one option, an item id
 -- default must be -1 or more, and a string default over 256 bytes needs a larger max_len.
 --
--- The native host validates the schema when a script is described or run. M.validate
--- below is the same check in Lua: bot.run uses it when the host surface cannot validate.
+-- The native host validates the schema when a script is described or run. M.validate_fields
+-- and M.validate_manifest are the same per-field checks in Lua: bot.run uses them when the
+-- host surface cannot validate. One rule is checked by the host only: the whole schema must
+-- fit one message to the GUI (every string at its max_len, every choice at its longest
+-- option), which refuses, say, 256 string fields of max_len 4096.
 
 local M = {}
 
@@ -117,7 +121,7 @@ function KIND_CHECKS.int(f, path)
   if f.step ~= nil then
     local step = as_integer(f.step)
     if step == nil then return path .. ".step: expected an integer" end
-    if step < 1 then return path .. ".step: must be at least 1" end
+    if step < 1 or step > INT32_MAX then return path .. ".step: must be 1..2147483647" end
   end
   local d = as_integer(f.default)
   if d == nil then return path .. ".default: expected an integer" end

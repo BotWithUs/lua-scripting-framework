@@ -53,6 +53,8 @@ T["int fields: range, int32 bounds, step and integral floats"] = function(assert
   refused(assert_, Config.int_field("n", "N", 0, { min = 2, max = 1 }), "config_schema[0].min")
   refused(assert_, Config.int_field("n", "N", 0, { max = 2147483648 }), "config_schema[0].max")
   refused(assert_, Config.int_field("n", "N", 0, { step = 0 }), "config_schema[0].step")
+  refused(assert_, Config.int_field("n", "N", 0, { step = 2147483648 }), "config_schema[0].step")
+  assert_(field_error(Config.int_field("n", "N", 0, { step = 2147483647 })) == nil, "step up to int32 max")
   refused(assert_, Config.int_field("n", "N", 1.5), "config_schema[0].default")
   assert_(field_error(Config.int_field("n", "N", 3.0)) == nil, "an integral float is an integer")
   assert_(Config.defaults({ Config.int_field("n", "N", 3.0) }).n == 3
