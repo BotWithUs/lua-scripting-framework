@@ -6,14 +6,13 @@ hybrid host (`native-scripting-host`); the other is `python-scripting-framework`
 ## Where it sits
 
 ```
-native-scripting-host (private, C)   embeds Lua + CPython; installs the global `bwu`
+native-scripting-host   embeds Lua 5.4 (and Python); installs the global `bwu`
         └── bwu table  ◄─────────────  THIS repo wraps it into an ergonomic Lua API
-python-scripting-framework (private)  the sibling Python API on botwithus._native
+python-scripting-framework            the sibling Python API on the same host
 ```
 
-This repo contains **no wire code** — no pipe, no shared memory, no crypto. It is pure Lua
-over the `bwu` surface. That is deliberate: the wire contract and the SDN decrypt path live
-in the native host, and this layer is safe to open-source because it is just idioms.
+This repo contains **no wire code** — no pipe, no shared memory. It is pure Lua over the
+`bwu` surface. The host owns the connection to the game client; this layer is only idioms.
 
 ## Design rules
 
@@ -33,13 +32,16 @@ in the native host, and this layer is safe to open-source because it is just idi
 
 ## Tests
 
-`scripts/test.ps1` or `lua spec/run.lua` (Lua 5.4). The runner is dependency-free and sets
-`package.path` from its own location. CI installs `lua5.4` and runs the same file.
+`scripts/test.ps1` or `lua5.4 spec/run.lua`. **Lua 5.4 only**: the library uses 5.4
+integer and bitwise operators, so LuaJIT and 5.1-5.3 cannot run it. The runner is
+dependency-free, sets `package.path` from its own location, and exits 1 when any spec fails.
+CI (`.github/workflows/test.yml`) installs `lua5.4` on ubuntu-latest and runs the same file.
 
 ## Compatibility note
 
 The action ids and surface field names in `botwithus.actions` / `botwithus.game` mirror the
-native host's `include/bwu_host_surface.h`. If that surface changes, update these to match;
+native host's `include/bwu_host_surface.h`. The action builders send exactly the param shapes
+the Python framework's builders send, and the specs pin the packed values. If that surface changes, update these to match;
 `spec/fake_bwu.lua` is the shape contract the tests pin.
 
 Varp state numbers are the exception: `botwithus.variables` maps them through the surface's own

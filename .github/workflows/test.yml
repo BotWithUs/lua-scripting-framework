@@ -1,0 +1,24 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  spec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lua 5.4
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lua5.4
+      - name: Lua version
+        run: lua5.4 -v
+      - name: Run the spec suite
+        # spec/run.lua exits 1 when any spec fails, which fails this step.
+        run: lua5.4 spec/run.lua

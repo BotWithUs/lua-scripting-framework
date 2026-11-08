@@ -38,7 +38,8 @@ Input.MODE_AMOUNT = 7
 
 Input.AMOUNT_MAX_LEN = 10
 Input.NAME_MAX_LEN   = 12
--- The most actions the agent takes in one queue_actions call; it drops any past this.
+-- The most actions the agent takes in one queue_actions call; it refuses a longer batch
+-- whole, queueing none of it.
 Input.MAX_BATCH = 128
 
 local U16_MAX = 0xFFFF
@@ -122,7 +123,8 @@ function Input.key_action(iface, comp, stroke, sub)
   return trigger(iface, comp, Input.TRIGGER_TYPE_KEY, stroke:packed(), sub or Input.SUB_NONE)
 end
 
--- Send `strokes` in order as one batch. Returns how many the agent queued.
+-- Send `strokes` in order as one batch. Returns how many were queued: all of them, since
+-- Game:queue_actions raises, saying whether any key was queued, when the batch fails.
 function Input.fire_keys(game, iface, comp, strokes)
   if #strokes > Input.MAX_BATCH then
     error(#strokes .. " keys is more than one batch (" .. Input.MAX_BATCH .. ")", 2)
@@ -199,12 +201,11 @@ function Dialog:text() return self:is_open() and self:_typed() or "" end
 -- varc 2506 without the open check (the caller has already made it).
 function Dialog:_typed() return self._game:varc_string(Input.VARC_TEXT) end
 
+-- One batch: the agent queues every key or none. A failed batch raises from
+-- Game:queue_actions, and the error says whether any key was queued (only an old agent or an
+-- unknown outcome can leave partial input in the dialog).
 function Dialog:_send(strokes)
-  local queued = Input.fire_keys(self._game, Input.IFACE, Input.COMP, strokes)
-  if queued ~= #strokes then
-    error(string.format("input dialog: the agent queued %d of %d keys (its queue is full?); "
-      .. "the dialog may hold partial input", queued, #strokes), 3)
-  end
+  Input.fire_keys(self._game, Input.IFACE, Input.COMP, strokes)
   return true
 end
 
