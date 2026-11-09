@@ -46,8 +46,12 @@ such a loader (see *Running under the GUI* below).
 
 `on_config_update(ctx, config)` with the initial settings → `on_start(ctx)` once →
 `on_loop(ctx)` repeatedly → `on_stop(ctx)` once. `on_loop` returns a **delay in server
-ticks**; a negative return stops the script. This matches the Java and C# hosts exactly.
-Only `on_loop` is required.
+ticks**; a negative return stops the script. Only `on_loop` is required.
+
+The unit is not the same in every host. Lua counts **server ticks** (600 ms each). The Java
+host (`BotScript.onLoop()`) and the Python frontend (`on_loop`) return **milliseconds**. In
+all three a negative value stops the script. So `return 5` waits five ticks (about 3 s) in Lua
+but 5 ms in Java or Python. When you port a script, convert the delay; do not copy it over.
 
 **Stopping.** When the GUI stops a run, `ctx:stopping()` turns `true`, `ctx:sleep_ticks(n)`
 returns `false` at once (it returns `true` when the ticks passed), no further `on_loop` runs,
