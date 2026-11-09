@@ -92,10 +92,12 @@ end
 --                      VK_MENU (18), never the left/right variants.
 --   is_alt / is_ctrl / is_shift   the modifiers held, including the pressed key itself.
 --   synthetic          the agent's own send_key sent this key, not the user.
---   text_input_focused a text field had the keyboard, so scripts can ignore keys typed into chat.
---                      Coverage is incomplete until the agent's chat source lands: today it is set
---                      only for native text fields, and NOT while typing in chat.
---   is_repeat          autorepeat of a key that is already held.
+--   text_input_focused a text field had the keyboard at the moment this key-down arrived: the chat
+--                      line, bank search, a game prompt, the bug-report box, or a native input/list
+--                      field. Scripts can use it to ignore keys typed into text. Known gap: the
+--                      effect of the "always-on chat" setting is not established.
+--   is_repeat          autorepeat of a key that is already held. Not set on autorepeats while the
+--                      developer console is open; normal play is unaffected.
 -- An older agent writes 0 in the flags byte, so all three flags read false against it.
 local function has_flag(flags, bit) return flags & bit ~= 0 end
 
