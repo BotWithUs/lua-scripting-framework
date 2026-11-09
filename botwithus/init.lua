@@ -10,7 +10,7 @@
 
 local M = {}
 
-M.VERSION  = "0.1.0"
+M.VERSION  = "1.0.0"
 M.Tile     = require("botwithus.tile")
 M.Actions  = require("botwithus.actions")
 M.Game     = require("botwithus.game")
