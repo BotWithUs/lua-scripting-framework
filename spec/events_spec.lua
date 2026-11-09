@@ -99,14 +99,77 @@ T["unknown event types pass through unchanged"] = function(assert_)
   assert_(Events.decode(rec) == rec, "same record back")
 end
 
+-- key_input: VK_SHIFT (16) with Ctrl and Shift held, then the flags byte. 8 bytes.
+local function key_body(flags)
+  return bytes({ 0x10, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, flags })
+end
+
+local function key_flags(ev)
+  return ("%s %s %s"):format(tostring(ev.synthetic), tostring(ev.text_input_focused),
+    tostring(ev.is_repeat))
+end
+
+T["key_input decodes key and modifiers, all flags false at 0"] = function(assert_)
+  assert_(Events.KEY_INPUT == 30 and Events.KEY_INPUT_SIZE == 8, "type 30, 8 bytes")
+  local ev = Events.decode({ type = 30, body = key_body(0x00) })
+  assert_(ev.name == "key_input" and ev.type == 30 and ev.error == nil, "named key_input")
+  assert_(ev.key == 16, "key " .. tostring(ev.key))
+  assert_(ev.is_alt == false and ev.is_ctrl == true and ev.is_shift == true, "modifiers")
+  assert_(key_flags(ev) == "false false false", "flags " .. key_flags(ev))
+end
+
+T["key_input each flag bit maps to one field"] = function(assert_)
+  assert_(Events.KEY_FLAG_SYNTHETIC == 1 and Events.KEY_FLAG_TEXT_INPUT_FOCUSED == 2
+    and Events.KEY_FLAG_REPEAT == 4, "bit values")
+  local want = { [0x01] = "true false false", [0x02] = "false true false",
+                 [0x04] = "false false true", [0x07] = "true true true" }
+  for flags, expected in pairs(want) do
+    local got = key_flags(Events.decode({ type = 30, body = key_body(flags) }))
+    assert_(got == expected, ("flags 0x%02X: %s"):format(flags, got))
+  end
+end
+
+T["key_input reserved flag bits are ignored, never rejected"] = function(assert_)
+  local ev = Events.decode({ type = 30, body = key_body(0xF8) })
+  assert_(ev.name == "key_input" and ev.error == nil, "decoded")
+  assert_(key_flags(ev) == "false false false", "0xF8: " .. key_flags(ev))
+  local mixed = Events.decode({ type = 30, body = key_body(0xFD) })
+  assert_(key_flags(mixed) == "true false true", "0xFD: " .. key_flags(mixed))
+end
+
+T["key_input key is unsigned and the modifiers read independently"] = function(assert_)
+  local ev = Events.decode({ type = 30, body = bytes({ 0xFE, 0xFF, 0xFF, 0xFF, 1, 0, 0, 0 }) })
+  assert_(ev.key == 4294967294, "key reads unsigned: " .. tostring(ev.key))
+  assert_(ev.is_alt == true and ev.is_ctrl == false and ev.is_shift == false, "alt only")
+  local alt = Events.decode({ type = 30, body = bytes({ 0x12, 0, 0, 0, 1, 1, 1, 0 }) })
+  assert_(alt.key == 18 and alt.is_alt and alt.is_ctrl and alt.is_shift, "VK_MENU, all held")
+end
+
+T["key_input ignores bytes past the eighth"] = function(assert_)
+  local ev = Events.decode({ type = 30, body = key_body(0x02) .. bytes({ 0xFF, 0xFF }) })
+  assert_(ev.name == "key_input" and ev.key == 16, "decoded")
+  assert_(key_flags(ev) == "false true false", "flags from byte 8: " .. key_flags(ev))
+end
+
+T["key_input with a short body comes back raw with an error"] = function(assert_)
+  local short = key_body(0x07):sub(1, 7)
+  local ok, ev = pcall(Events.decode, { type = 30, body = short })
+  assert_(ok, "decode does not raise: " .. tostring(ev))
+  assert_(ev.type == 30 and ev.body == short and ev.name == nil, "the raw record")
+  assert_(ev.error and ev.error:find("key_input event body is 7 bytes, expected at least 8", 1, true),
+    tostring(ev.error))
+end
+
 T["Game:poll_events decodes in order and drains"] = function(assert_)
   _G.bwu = fake_bwu.new({ events = {
     { type = 2, body = bytes({ 7, 0, 0, 0 }) },
     { type = 41, body = REFUSED },
+    { type = 30, body = key_body(0x01) },
   } })
   local g = bot.Game.attach()
   local evs = g:poll_events()
-  assert_(#evs == 2, "two events")
+  assert_(#evs == 3, "three events")
+  assert_(evs[3].name == "key_input" and evs[3].synthetic == true, "key_input decoded")
   assert_(evs[1].type == 2 and evs[1].body ~= nil, "raw tick passes through")
   assert_(evs[2].name == "action_refused" and evs[2].reason_name == "anchor_timeout", "refusal decoded")
   assert_(#g:poll_events() == 0, "a second poll is empty")

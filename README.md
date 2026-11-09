@@ -201,7 +201,7 @@ gives you `sleep_ticks`, not a millisecond timer, on purpose.
 | `botwithus.clients` | client management: `clients.new()` -> `:accounts()`, `:launch()` (-> `:wait_attached()`), `:stop()`, `:clients()`, `:attach()` (once per process), events via `:poll()` / `:pump()` / `:wait_for()` / `:on()`, `:on_close_requested()` and `:ack_close()`. See [docs/CLIENTS.md](docs/CLIENTS.md) |
 | `botwithus.tile` | `Tile` with Chebyshev (8-directional) distance |
 | `botwithus.actions` | action ids + builders: `walk_to(x, y)`, `component_click(iface, comp [, option = 1 [, sub_slot = -1]])`, `dialogue_option(iface, comp)` |
-| `botwithus.events` | agent event decoding for `Game:poll_events()`: `action_refused` (`reason_name` `no_target` / `anchor_timeout` / `no_opener`, `anchor_name`, `held_ms`) and `action_executed`; other types pass through as raw `{ type, body }` |
+| `botwithus.events` | agent event decoding for `Game:poll_events()`: `action_refused` (`reason_name` `no_target` / `anchor_timeout` / `no_opener`, `anchor_name`, `held_ms`), `action_executed` and `key_input` (`key`, `is_alt` / `is_ctrl` / `is_shift`, `synthetic`, `text_input_focused`, `is_repeat`); other types pass through as raw `{ type, body }` |
 | `botwithus.input` | the game's input dialog: `Input.dialog(game)` with `:mode()`, `:is_open()`, `:text()`, `:enter_amount(3 \| "10k")` / `:enter_text(name)` (type and submit), `:submit()`, `:cancel()`, `:backspace(n)`, `:clear()` (false when the dialog is closed or in the wrong mode; text it would reject raises before anything is sent). Low level: `KeyStroke` with `ENTER` / `BACKSPACE` / `ESCAPE`, `fire_keys`, `type_text`, `component_trigger` |
 
 ## Managing clients
