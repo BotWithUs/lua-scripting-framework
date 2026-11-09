@@ -14,6 +14,7 @@
 local Events = {}
 
 -- Event type discriminators (the agent's numbering; permanent).
+Events.KEY_INPUT       = 30
 Events.ACTION_EXECUTED = 40
 Events.ACTION_REFUSED  = 41
 
@@ -45,7 +46,13 @@ local ANCHOR_NAMES = {
 
 local UNKNOWN = "unknown"
 
+-- key_input flags bits (the byte at offset 7). Other bits are reserved and ignored.
+Events.KEY_FLAG_SYNTHETIC          = 1  -- the agent's own send_key sent it
+Events.KEY_FLAG_TEXT_INPUT_FOCUSED = 2  -- a text field had the keyboard (see decode_key_input)
+Events.KEY_FLAG_REPEAT             = 4  -- autorepeat of a key already held
+
 -- Body sizes, in bytes.
+Events.KEY_INPUT_SIZE = 8         -- uint32 key, then uint8 isAlt, isCtrl, isShift, flags
 local ACTION_EXECUTED_SIZE = 16   -- int32 actionId, param1, param2, param3
 local ACTION_REFUSED_SIZE  = 28   -- the same four, then uint32 reason, anchorCase, heldMs
 
@@ -80,7 +87,34 @@ local function decode_refused(rec)
   return ev
 end
 
+-- One key-down as the game received it (key-up is not reported).
+--   key                Windows virtual-key code: the generic VK_SHIFT (16), VK_CONTROL (17) and
+--                      VK_MENU (18), never the left/right variants.
+--   is_alt / is_ctrl / is_shift   the modifiers held, including the pressed key itself.
+--   synthetic          the agent's own send_key sent this key, not the user.
+--   text_input_focused a text field had the keyboard at the moment this key-down arrived: the chat
+--                      line, bank search, a game prompt, the bug-report box, or a native input/list
+--                      field. Scripts can use it to ignore keys typed into text. Known gap: the
+--                      effect of the "always-on chat" setting is not established.
+--   is_repeat          autorepeat of a key that is already held. Not set on autorepeats while the
+--                      developer console is open; normal play is unaffected.
+-- An older agent writes 0 in the flags byte, so all three flags read false against it.
+local function has_flag(flags, bit) return flags & bit ~= 0 end
+
+local function decode_key_input(rec)
+  local key, alt, ctrl, shift, flags = string.unpack("<I4BBBB", rec.body)
+  return {
+    type = rec.type, name = "key_input", key = key,
+    is_alt = alt ~= 0, is_ctrl = ctrl ~= 0, is_shift = shift ~= 0,
+    synthetic          = has_flag(flags, Events.KEY_FLAG_SYNTHETIC),
+    text_input_focused = has_flag(flags, Events.KEY_FLAG_TEXT_INPUT_FOCUSED),
+    is_repeat          = has_flag(flags, Events.KEY_FLAG_REPEAT),
+  }
+end
+
 local DECODERS = {
+  [Events.KEY_INPUT]       = { name = "key_input", size = Events.KEY_INPUT_SIZE,
+                               fn = decode_key_input },
   [Events.ACTION_EXECUTED] = { name = "action_executed", size = ACTION_EXECUTED_SIZE,
                                fn = decode_executed },
   [Events.ACTION_REFUSED]  = { name = "action_refused", size = ACTION_REFUSED_SIZE,
@@ -88,6 +122,8 @@ local DECODERS = {
 }
 
 -- Decode one { type, body } record. Never raises. A known type comes back as a named table:
+--   key_input        { type, name, key, is_alt, is_ctrl, is_shift, synthetic,
+--                      text_input_focused, is_repeat }
 --   action_executed  { type, name, action_id, param1, param2, param3 }
 --   action_refused   the same, plus reason / reason_name, anchor_case / anchor_name, held_ms
 -- A known type whose body is too short comes back as { type, body, error = <why> }.

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **`Game:poll_events()` decodes `key_input` (type 30).** `Events.KEY_INPUT`, `Events.KEY_INPUT_SIZE`
+  and a decoder returning `{ type, name = "key_input", key, is_alt, is_ctrl, is_shift, synthetic,
+  text_input_focused, is_repeat }`. The three flags come from the body's last byte (NXTLibrary
+  PR #84, merged at `ee221d2`). Against an older agent they all read false. `text_input_focused`
+  is set when a text field (chat, bank search, a prompt, a native input) had the keyboard, so
+  scripts can ignore keys typed into text. A body shorter than 8 bytes comes back raw with
+  `error`, as other events do.
+
 ## 1.0.0 — 2026-11-08
 
 Requires the BotWithUs native host, protocol 25, and Lua 5.4.
