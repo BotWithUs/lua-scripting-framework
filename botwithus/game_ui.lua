@@ -68,13 +68,6 @@ local JAGEX_HOOKS = {
 local COMBINED_SHIFT = 16
 local COMBINED_MASK  = 0xFFFF
 
--- Dynamic child key from (category, dynamic id): NXTLibrary src/offsets/offsets.h
--- `offsets::dynamic_key` at 122d8b3 (engine constants of client 951-3). The agent's
--- ui.get_component takes only the key, so the four-argument GetComponent computes it here.
--- If the agent ever rebases these, GetComponentByKey takes a key directly.
-local KEY = { CATEGORY_BIAS = 15, CATEGORY_SHIFT = 8, MAX_CATEGORY = 234, MAX_KEY = 0xFAFF,
-              CAT0_DYNAMIC_LIMIT = 0x1000, CATN_DYNAMIC_LIMIT = 0x100 }
-GameUi._KEY = KEY
 
 -- Errors -----------------------------------------------------------------------------------
 
@@ -538,27 +531,12 @@ local function make_type(reg, class)
   }
 end
 
--- The dynamic child key for (category, dynamic id), or nil and why.
-function GameUi.child_key(category, dynamic)
-  if math.type(category) ~= "integer" or math.type(dynamic) ~= "integer"
-      or category < 0 or dynamic < 0 then
-    return nil, "category and dynamic id must be non-negative integers"
-  end
-  if category > KEY.MAX_CATEGORY then return nil, "category above " .. KEY.MAX_CATEGORY end
-  if category == 0 then
-    if dynamic >= KEY.CAT0_DYNAMIC_LIMIT then return nil, "dynamic id out of range" end
-    return dynamic
-  end
-  if dynamic >= KEY.CATN_DYNAMIC_LIMIT then return nil, "dynamic id out of range" end
-  local key = dynamic + ((category + KEY.CATEGORY_BIAS) << KEY.CATEGORY_SHIFT)
-  if key > KEY.MAX_KEY then return nil, "key out of range" end
-  return key
-end
-
 local function make_interfaces(reg)
   local Interfaces = {}
 
-  -- A Jagex component as a parent (or a ui.get target), or nil, message, kind.
+  -- A Jagex component as a parent (or a ui.get target), or nil, message, kind. `key` picks a
+  -- dynamic child of the static component (the `.key` its handle reports); nil for the
+  -- static component itself.
   function Interfaces:GetComponentByKey(iface, comp, key)
     local b = surface()
     reg.used = true
@@ -567,22 +545,19 @@ local function make_interfaces(reg)
     return reg:wrap(info, BY_TYPE_NAME[info.type_name] or OTHER, false)
   end
 
-  -- Jagex's forms: (combinedID), (interfaceID, staticID), (combinedID, categoryID, dynamicID),
-  -- (interfaceID, staticID, categoryID, dynamicID).
+  -- Jagex's static forms: (combinedID) and (interfaceID, staticID). The dynamic-child forms,
+  -- (combinedID, categoryID, dynamicID) and (interfaceID, staticID, categoryID, dynamicID),
+  -- raise "not supported yet": the agent looks a child up by its key, not by category and
+  -- id. GetComponentByKey takes that key (a component's `.key`).
   function Interfaces:GetComponent(a, b, c, d)
-    local iface, comp, category, dynamic
-    if b == nil or (c ~= nil and d == nil) then
-      iface, comp, category, dynamic = a >> COMBINED_SHIFT, a & COMBINED_MASK, b, c
-    else
-      iface, comp, category, dynamic = a, b, c, d
+    if c ~= nil or d ~= nil then
+      unsupported("ui.Interfaces:GetComponent with a category and dynamic id")
     end
-    local key
-    if category ~= nil then
-      local why
-      key, why = GameUi.child_key(int(category), int(dynamic))
-      if not key then error("botwithus.ui: GetComponent: " .. why, 2) end
+    if b == nil then
+      if math.type(a) ~= "integer" then error("botwithus.ui: a combined id must be an integer", 2) end
+      return self:GetComponentByKey(a >> COMBINED_SHIFT, a & COMBINED_MASK)
     end
-    return self:GetComponentByKey(iface, comp, key)
+    return self:GetComponentByKey(a, b)
   end
 
   function Interfaces:GetInterface() unsupported("ui.Interfaces:GetInterface") end

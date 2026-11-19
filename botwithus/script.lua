@@ -68,6 +68,11 @@ Script.STALL_CHECK_MS = STALL_CHECK_MS
 local EXIT_CONFIRM_MS = 1000
 Script.EXIT_CONFIRM_MS = EXIT_CONFIRM_MS
 
+-- How often a sleep reads plugin-UI events while the server tick stands still, in
+-- milliseconds: one server tick.
+local UI_PUMP_MS = 600
+Script.UI_PUMP_MS = UI_PUMP_MS
+
 -- Wait until server_tick advances by n, calling wait() between polls. Returns true when it
 -- did, false when the run is stopping, wait() returned false, or the client exited. The exit
 -- is seen on any poll whose refresh fails while the host no longer lists the pid, or, when the
@@ -81,14 +86,21 @@ local function sleep_ticks(game, wait, n)
   if game:_client_gone() then return false end
   local start = game:server_tick()
   local last, stalled_ms, suspect = start, 0, false
+  local unpumped_ms = 0
   while true do
     if not wait() then return false end
     if game:_client_gone() then return false end
     local now = game:server_tick()
     if now - start >= n then return true end
+    -- Plugin-UI events (never waits): once per server tick, and at the same cadence while the
+    -- tick stands still, as it does in the lobby, where the game takes components down.
+    unpumped_ms = unpumped_ms + TICK_POLL_MS
+    if now ~= last or unpumped_ms >= UI_PUMP_MS then
+      game:_pump_ui()
+      unpumped_ms = 0
+    end
     if now ~= last then
       last, stalled_ms, suspect = now, 0, false
-      game:_pump_ui()   -- plugin-UI events, once per server tick (never waits)
     else
       stalled_ms = stalled_ms + TICK_POLL_MS
       if stalled_ms >= STALL_CHECK_MS then

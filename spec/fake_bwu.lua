@@ -307,7 +307,7 @@ function M.new(opts)
   end
 
   -- The detach the host makes: its plugin-UI release (one ui.destroy_all on this host's own
-  -- connection, when it used the ui) happens inside it, as in host_surface.cpp's bwu_detach.
+  -- connection, when it used the ui) happens inside it, as the native host's detach does.
   local plain_detach = bwu.detach
   function bwu.detach(h)
     if bwu._ui then bwu._ui.host_release(h) end
@@ -322,8 +322,8 @@ end
 
 -- Plugin UI (bwu.ui_*) -----------------------------------------------------------------------
 --
--- The shapes native-scripting-host's src/embed_lua.c returns at 8dcdf71, over a toy agent that
--- keeps NXTLibrary's (122d8b3) rules and refusal texts: per-connection ownership (a connection
+-- The shapes the native host's bwu.ui_* Lua binding returns, over a toy agent that keeps the
+-- agent's ui.* rules and refusal texts: per-connection ownership (a connection
 -- is one attach's host table), Jagex handles usable only as parents and ui.get targets, the
 -- forbidden props, category 0, the types and canvas ops not supported yet. A refusal returns
 -- nil, text, "refused"; `ui.timeout = true` makes the next call return nil, "rpc_timeout",
@@ -467,7 +467,7 @@ function M.install_ui(bwu)
     local handle = ui.next_handle
     ui.next_handle = handle + 1
     c.handle = handle
-    c.key = (((opts.category or 1) + 15) << 8) + (opts.dynamic or (handle % 256))
+    c.key = 0x1000 + handle   -- opaque here: the agent computes it
     apply(c, props)
     ui.comps[handle] = c
     return info(c)
@@ -607,7 +607,7 @@ function M.install_ui(bwu)
     push(h, { handle = 0, hook = "overflow", reason = "", truncated = false, dropped = n })
   end
   -- What the host does at detach: one ui.destroy_all on this host's own connection, if it used
-  -- the ui (host_surface.cpp ReleaseUi). Counts what it found left.
+  -- the ui. Counts what it found left.
   function ui.host_release(h)
     if not ui.used[h] then return end
     record("host_release", h)

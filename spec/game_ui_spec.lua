@@ -120,21 +120,29 @@ end
 
 -- Interfaces:GetComponent --------------------------------------------------------------------
 
-T["ui: GetComponent takes Jagex's four forms"] = function(assert_)
+T["ui: GetComponent takes Jagex's static forms; a child is looked up by its key"] = function(assert_)
   local _, _, ui, f = setup()
   local a = ui.Interfaces:GetComponent(IFACE, COMP)
   local b = ui.Interfaces:GetComponent((IFACE << 16) | COMP)
   assert_(a == b, "combined id resolves to the same component object")
   assert_(a.isJagex == true and a.interfaceID == IFACE and a.staticID == COMP, "info fields")
   local layer = ui.Layer.new(a, 3, 7)
-  local key = layer.key
-  assert_(key == 7 + ((3 + 15) << 8), "the agent-side key for (3, 7)")
-  local child = ui.Interfaces:GetComponent(IFACE, COMP, 3, 7)
-  assert_(child and child.isJagex and child.key == key, "4-arg form looks the child up by its key")
-  local child3 = ui.Interfaces:GetComponent((IFACE << 16) | COMP, 3, 7)
-  assert_(child3 == child, "3-arg combined form")
+  local create_opts = f.calls_of("ui_create")[1].args[5]
+  assert_(create_opts.category == 3 and create_opts.dynamic == 7, "category and dynamic id sent")
+  local child = ui.Interfaces:GetComponentByKey(IFACE, COMP, layer.key)
+  assert_(child and child.isJagex and child.key == layer.key and child ~= layer,
+    "a lookup by key is a separate, Jagex (read-only) handle")
   local lookups = f.calls_of("ui_get_component")
-  assert_(lookups[1].args[4] == nil and lookups[3].args[4] == key, "key nil, then the child key")
+  assert_(lookups[1].args[4] == nil and lookups[3].args[4] == layer.key, "key nil, then the key")
+  local before = #f.calls
+  for _, fn in ipairs({
+    function() ui.Interfaces:GetComponent(IFACE, COMP, 3, 7) end,
+    function() ui.Interfaces:GetComponent((IFACE << 16) | COMP, 3, 7) end,
+  }) do
+    local err = raised(assert_, fn)
+    assert_(err.kind == "unsupported", "the category / dynamic forms: " .. tostring(err))
+  end
+  assert_(#f.calls == before, "and they send nothing")
 end
 
 T["ui: GetComponent returns nil, the agent's text and kind when it is not there"] = function(assert_)
@@ -143,14 +151,6 @@ T["ui: GetComponent returns nil, the agent's text and kind when it is not there"
   assert_(comp == nil and err == "ui: component not found" and kind == "refused", tostring(err))
 end
 
-T["ui: child_key mirrors the agent's key math and its ranges"] = function(assert_)
-  assert_(GameUi.child_key(0, 5) == 5, "category 0 is the id itself")
-  assert_(GameUi.child_key(1, 0) == 16 << 8, "category 1")
-  assert_(GameUi.child_key(234, 255) == 255 + (249 << 8), "the top of the range")
-  assert_(GameUi.child_key(235, 0) == nil, "category above 234")
-  assert_(GameUi.child_key(1, 256) == nil, "dynamic id above 255 with a category")
-  assert_(GameUi.child_key(0, 0x1000) == nil, "dynamic id above 0xFFF in category 0")
-end
 
 -- Properties -------------------------------------------------------------------------------
 
@@ -444,6 +444,27 @@ T["ui: the runner reads ui events once per tick, so callbacks run during a run"]
   }, { max_iters = 2 })
   assert_(reason == "server_events", "the callback ran inside the run: " .. tostring(reason))
   assert_(#f.calls_of("ui_destroy") == 0, "and the end of the run did not destroy it again")
+end
+
+T["ui: a sleep on a stalled tick (the lobby) still reads ui events, about once a tick"] = function(assert_)
+  local b, game, ui, f = setup()
+  local Script = require("botwithus.script")
+  local layer = ui.Layer.new(ui.Interfaces:GetComponent(IFACE, COMP))
+  local reason
+  layer:Subscribe(ui.Hook.DESTROYED, function(_, r) reason = r end)
+  b.refresh = function() return true end            -- the tick stands still
+  local waits = 0
+  local polls_before = f.polls or 0
+  local function wait()
+    waits = waits + 1
+    if waits == 3 then f.game_destroy(layer.handle, "parent_gone") end
+    return waits < 200   -- then stop the sleep
+  end
+  Script._sleep_ticks(game, wait, 1)
+  assert_(reason == "parent_gone", "delivered during the stall: " .. tostring(reason))
+  local polls = (f.polls or 0) - polls_before
+  local expected = 200 * Script.TICK_POLL_MS // Script.UI_PUMP_MS
+  assert_(polls >= expected - 1 and polls <= expected + 1, "about once per tick, not per wait: " .. polls)
 end
 
 T["ui: detach marks every component destroyed (the host released them)"] = function(assert_)
