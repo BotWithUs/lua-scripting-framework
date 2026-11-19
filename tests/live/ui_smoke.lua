@@ -18,13 +18,11 @@
 --   once the driver logs back in and "BWU_SMOKE_OUT .. '.go'" exists (or after 180 s).
 -- Raises (bwu_host exits non-zero) on any mismatch.
 
--- Resolve `botwithus` from this file's repo, as spec/run.lua does.
-local source = debug.getinfo(1, "S").source
-local here = source:sub(1, 1) == "@" and source:sub(2):match("^(.*)[/\\][^/\\]*$") or "."
-local root = here .. "/../../"
-package.path = root .. "?.lua;" .. root .. "?/init.lua;" .. package.path
-
+-- `botwithus` comes from package.path: set LUA_PATH to this repo
+-- ("<repo>/?.lua;<repo>/?/init.lua;;") and run from a directory with no other copy in it.
+-- bwu_host names chunks by their short path, so this file cannot find its repo by itself.
 local bot = require("botwithus")
+assert(bot.GameUi, "the botwithus on package.path has no game_ui: set LUA_PATH to this repo")
 
 local IFACE, COMP = 1477, 61   -- TOPLEVEL_V2__GAME_AREA
 local FORBIDDEN = "ui: prop forbidden on agent components (no op, drag or target configuration)"
