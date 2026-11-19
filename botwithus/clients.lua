@@ -80,6 +80,10 @@ local function surface()
   return b
 end
 
+-- The kind of a plugin-UI event: a string, beside the service's integer kinds.
+local UI_KIND = "ui"
+Clients.UI_EVENT = UI_KIND
+
 -- integer constant -> name, for one of the tables above.
 local function name_of(names, value)
   local b = surface()
@@ -108,7 +112,8 @@ function Clients.new()
     _listeners = {},   -- { kind = integer or nil, fn = function }, in registration order
     _close_hook = nil,
     _known = {},       -- client_id -> { pid, state, failure }
-    _claims = {},      -- pid -> { game, client_id }
+    _claims = {},      -- pid -> { game, client_id, ui_off }
+    _ui_queue = {},    -- plugin-UI events of the claimed Games, not yet handed out
   }, Clients)
 end
 
@@ -252,10 +257,14 @@ function Clients:on_event(fn)
   return self:on(nil, fn)
 end
 
--- Call fn(event) for one kind of event: a name ("client_exited") or a CM_EV_* constant.
+-- Call fn(event) for one kind of event: a name ("client_exited") or a CM_EV_* constant, or
+-- "ui" for the plugin-UI events of every Game this manager attached (see botwithus.game_ui:
+-- { kind = "ui", pid, handle, hook, reason, component, ... }; hook "overflow" carries
+-- `dropped`).
 function Clients:on(kind, fn)
   assert(type(fn) == "function", "botwithus: a handler must be a function")
-  local entry = { kind = kind and constant_of(EVENT_NAMES, kind, "event kind"), fn = fn }
+  if kind ~= UI_KIND then kind = kind and constant_of(EVENT_NAMES, kind, "event kind") end
+  local entry = { kind = kind, fn = fn }
   self._listeners[#self._listeners + 1] = entry
   return function()
     for i, e in ipairs(self._listeners) do
@@ -324,6 +333,19 @@ local function dispatch(self, ev)
   return ev
 end
 
+-- Read the queued plugin-UI events of every Game this manager attached (never waits). Each
+-- Game's ui dispatches them to its own listeners, one of which queues them here.
+local function drain_ui(self)
+  for _, claim in pairs(self._claims) do claim.game:_pump_ui() end
+end
+
+-- The next plugin-UI event, through the handlers, or nil.
+local function next_ui(self)
+  local ev = table.remove(self._ui_queue, 1)
+  if ev then notify(self, ev) end
+  return ev
+end
+
 local function clamp_ms(ms)
   ms = math.tointeger(ms) or math.floor(tonumber(ms) or 0)
   if ms < 0 then return 0 end
@@ -334,9 +356,20 @@ end
 -- Read one event, waiting up to timeout_ms (0 by default, at most MAX_POLL_MS). The event
 -- goes through the handlers first and is then returned. nil when none came; nil, code,
 -- message if the host's connection core has stopped.
+--
+-- Plugin-UI events of the Games this manager attached come through here too, as kind "ui".
+-- They are read without waiting; one already queued is returned at once, and the wait for
+-- a service event ends with a look for any that arrived meanwhile.
 function Clients:poll(timeout_ms)
+  drain_ui(self)
+  local queued = next_ui(self)
+  if queued then return queued end
   local ev, code, msg = surface().cm_poll_event(clamp_ms(timeout_ms))
-  if not ev then return nil, code, msg end
+  if not ev then
+    if code then return nil, code, msg end
+    drain_ui(self)
+    return next_ui(self)
+  end
   return dispatch(self, ev)
 end
 
@@ -381,8 +414,12 @@ function Clients:attach_pid(pid, client_id)
   if claim then return claim.game end
   local ok, game = pcall(Game.attach, pid)
   if not ok then return nil, "attach_failed", tostring(game) end
-  self._claims[pid] = { game = game, client_id = client_id }
-  game._on_detach = function() self._claims[pid] = nil end
+  local ui_off = game:ui():on_event(function(ev) self._ui_queue[#self._ui_queue + 1] = ev end)
+  self._claims[pid] = { game = game, client_id = client_id, ui_off = ui_off }
+  game._on_detach = function()
+    ui_off()
+    self._claims[pid] = nil
+  end
   return game
 end
 

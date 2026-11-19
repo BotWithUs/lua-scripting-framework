@@ -25,6 +25,13 @@ M.Variables = require("botwithus.variables")
 -- Walk progress constants and helpers (Game:walk_ex / :walk_start ...): see botwithus/walk.lua.
 M.walk     = require("botwithus.walk")
 
+-- Plugin UI: native game components shaped like Jagex's `ui.*` (see botwithus/game_ui.lua).
+-- Reached per Game: `local ui = game:ui()` (or ctx.ui in bot.run), then ui.Canvas.new(...).
+M.GameUi   = require("botwithus.game_ui")
+
+-- Sugar: bot.ui(game) -> that Game's ui namespace.
+function M.ui(game) return game:ui() end
+
 local Script = require("botwithus.script")
 M.run = Script.run
 

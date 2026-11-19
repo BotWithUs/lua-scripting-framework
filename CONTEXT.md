@@ -28,6 +28,10 @@ This repo contains **no wire code** — no pipe, no shared memory. It is pure Lu
   whole host shares.
 - **Per-instance state.** A `clients` manager owns its handlers, its view of the clients and
   its attach claims; nothing lives at module level, so tests stay isolated.
+- **Plugin UI is per Game, and a run cleans up after itself.** `botwithus.game_ui` keeps one
+  registry per Game (one agent connection, never shared). The end of a run releases that Game's
+  components with one `ui.destroy_all` on its own connection, so a stalled agent costs one
+  timeout; `comp:Destroy()` is the only per-handle destroy.
 - **Match the other hosts' lifecycle** — `on_config_update`/`on_start`/`on_loop`(→ticks or negative)/`on_stop`.
 
 ## Tests

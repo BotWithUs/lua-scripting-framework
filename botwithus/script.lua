@@ -68,6 +68,11 @@ Script.STALL_CHECK_MS = STALL_CHECK_MS
 local EXIT_CONFIRM_MS = 1000
 Script.EXIT_CONFIRM_MS = EXIT_CONFIRM_MS
 
+-- How often a sleep reads plugin-UI events while the server tick stands still, in
+-- milliseconds: one server tick.
+local UI_PUMP_MS = 600
+Script.UI_PUMP_MS = UI_PUMP_MS
+
 -- Wait until server_tick advances by n, calling wait() between polls. Returns true when it
 -- did, false when the run is stopping, wait() returned false, or the client exited. The exit
 -- is seen on any poll whose refresh fails while the host no longer lists the pid, or, when the
@@ -81,10 +86,18 @@ local function sleep_ticks(game, wait, n)
   if game:_client_gone() then return false end
   local start = game:server_tick()
   local last, stalled_ms, suspect = start, 0, false
+  local unpumped_ms = 0
   while true do
     if not wait() then return false end
     if game:_client_gone() then return false end
     local now = game:server_tick()
+    -- Plugin-UI events (never waits): once per server tick, and at the same cadence while the
+    -- tick stands still, as it does in the lobby, where the game takes components down.
+    unpumped_ms = unpumped_ms + TICK_POLL_MS
+    if now ~= last or unpumped_ms >= UI_PUMP_MS then
+      game:_pump_ui()
+      unpumped_ms = 0
+    end
     if now - start >= n then return true end
     if now ~= last then
       last, stalled_ms, suspect = now, 0, false
@@ -108,6 +121,8 @@ Script._sleep_ticks = sleep_ticks
 
 local function make_ctx(game, wait, clients)
   local ctx = { game = game, clients = clients, config = {} }
+  -- The plugin-UI namespace, shaped like Jagex's `ui.*` (botwithus/game_ui.lua).
+  if game.ui then ctx.ui = game:ui() end
   -- Wait until server_tick advances by n. Returns true when it did, false when the run is
   -- stopping or its client exited (see sleep_ticks above). n <= 0 returns at once.
   function ctx:sleep_ticks(n) return sleep_ticks(game, wait, n) end
@@ -273,6 +288,7 @@ local function lifecycle(script, ctx, game, opts, progress)
   local iters = 0
   while not Ctl.stopping() do
     if game:_client_gone() then break end
+    game:_pump_ui()
     progress.iteration = iters + 1
     local delay = script.on_loop(ctx)
     if ends_loop(delay) then break end

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Plugin UI: `botwithus.game_ui`, shaped like Jagex's `ui.*` plugin API.** `game:ui()`,
+  `ctx.ui` or `bot.ui(game)` returns a namespace with `Canvas`, `Rectangle`, `Line`, `Text`
+  and `Layer` (`.new(parent, categoryID?, dynamicID?)`), `Interfaces:GetComponent`, the
+  `Set*` layout methods, properties, the canvas shapes plus `Batch`, `Destroy`,
+  `MoveToFront` / `MoveToBack` and `Subscribe(ui.Hook.DESTROYED, fn)`. Failures raise a ui
+  error carrying the agent's message verbatim. A run releases what it made when it ends, with
+  one `ui.destroy_all` on the Game's own connection. `ui` events (`destroyed`, `overflow`)
+  reach `bot.run` once per server tick and a clients manager's `on("ui")` / `poll()` /
+  `pump()`. Needs a native host with `bwu.ui_*` and an agent with the `ui.*` verbs. See
+  [docs/UI.md](docs/UI.md).
+- **`Clients:on_event(fn)` handlers now also receive `ui` events** (kind `"ui"`, a string)
+  from every Game the manager attached, beside the service's integer-kind events. A handler
+  registered for every kind that assumes `ev.kind` is an integer, or that every event has a
+  `client_id`, should check `ev.kind == "ui"` first. Handlers registered with
+  `on(<kind>, fn)` for a service kind are unaffected.
 - **`Game:poll_events()` decodes `key_input` (type 30).** `Events.KEY_INPUT`, `Events.KEY_INPUT_SIZE`
   and a decoder returning `{ type, name = "key_input", key, is_alt, is_ctrl, is_shift, synthetic,
   text_input_focused, is_repeat }`. The three flags come from the body's last byte (NXTLibrary
