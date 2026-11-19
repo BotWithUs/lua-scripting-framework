@@ -306,8 +306,329 @@ function M.new(opts)
     return steps
   end
 
+  -- The detach the host makes: its plugin-UI release (one ui.destroy_all on this host's own
+  -- connection, when it used the ui) happens inside it, as in host_surface.cpp's bwu_detach.
+  local plain_detach = bwu.detach
+  function bwu.detach(h)
+    if bwu._ui then bwu._ui.host_release(h) end
+    plain_detach(h)
+  end
+
+  if not opts.no_ui then M.install_ui(bwu) end
   if opts.no_cm then return bwu end
   M.install_cm(bwu, opts)
+  return bwu
+end
+
+-- Plugin UI (bwu.ui_*) -----------------------------------------------------------------------
+--
+-- The shapes native-scripting-host's src/embed_lua.c returns at 8dcdf71, over a toy agent that
+-- keeps NXTLibrary's (122d8b3) rules and refusal texts: per-connection ownership (a connection
+-- is one attach's host table), Jagex handles usable only as parents and ui.get targets, the
+-- forbidden props, category 0, the types and canvas ops not supported yet. A refusal returns
+-- nil, text, "refused"; `ui.timeout = true` makes the next call return nil, "rpc_timeout",
+-- "timeout". Test hooks: ui.game_destroy(handle, reason) plays the game taking a component
+-- down (a "destroyed" event to its owner, and parent_gone for its children), ui.overflow(host, n).
+
+local UI_FORBIDDEN = "ui: prop forbidden on agent components (no op, drag or target configuration)"
+local UI_READ_ONLY = "ui: handle is a Jagex component: read-only, usable only as a parent or with ui.get"
+local UI_UNKNOWN   = "ui: unknown handle (destroyed, invalidated or not yours)"
+local UI_UNKNOWN_PARENT = "ui: unknown parent handle (destroyed, invalidated or not yours)"
+M.UI_FORBIDDEN, M.UI_READ_ONLY, M.UI_UNKNOWN = UI_FORBIDDEN, UI_READ_ONLY, UI_UNKNOWN
+
+local UI_TYPES = { line = 0, rectangle = 1, text = 2, canvas = 8, layer = 20 }
+local UI_LATER_TYPES = { sprite = true, button = true, model = true, panel = true, grid = true,
+                         input_field = true, check = true, slider = true, combo_field = true,
+                         list = true }
+local UI_FORBIDDEN_PROPS = { op_config = true, opConfig = true, ops = true, drag_config = true,
+                             dragConfig = true, target = true, target_config = true,
+                             targetConfig = true, swipe_config = true, pinch_config = true,
+                             cursor_config = true, params_config = true, flag_restricted = true }
+local UI_LATER_PROPS = { hidden = true, enabled = true, font = true, sprite = true }
+local UI_PROPS = { x = "integer", y = "integer", width = "integer", height = "integer",
+                   rgba = "integer", clickthrough = "boolean", line_width = "integer",
+                   line_invert = "boolean", fill = "boolean", outline_thickness = "integer",
+                   text = "string", x_parent_pc = "float", x_self_pc = "float",
+                   y_parent_pc = "float", y_self_pc = "float", width_pc = "float",
+                   height_pc = "float" }
+local UI_CANVAS_ARGS = {
+  line = { "x", "y", "end_x", "end_y", "thickness", "rgba" },
+  outline = { "x", "y", "width", "height", "thickness", "rgba" },
+  rect = { "x", "y", "width", "height", "rgba" },
+  gradient_h = { "x", "y", "width", "height", "rgba_start", "rgba_end" },
+  gradient_v = { "x", "y", "width", "height", "rgba_start", "rgba_end" },
+  triangle = { "x0", "y0", "x1", "y1", "x2", "y2", "rgba" },
+  clear = {}, undo = {},
+}
+
+local function ui_type_ok(kind, v)
+  if kind == "float" then return math.type(v) == "float" end
+  if kind == "integer" then return math.type(v) == "integer" end
+  return type(v) == kind
+end
+
+function M.install_ui(bwu)
+  local ui = { next_handle = 100, comps = {}, calls = {}, events = {}, used = {},
+               jagex = { ["1477:61"] = true }, timeout = false }
+  bwu._ui = ui
+  bwu.UI_KEY_STATIC, bwu.UI_DEFAULT, bwu.UI_CANVAS_OPS_MAX, bwu.UI_LIST_MAX = -1, -1, 128, 256
+
+  local function record(fn, ...) ui.calls[#ui.calls + 1] = { fn = fn, args = { ... } } end
+  local function refuse(text) return nil, text, "refused" end
+  local function info(c)
+    return { handle = c.handle, parent = c.parent, type = c.type, type_name = c.type_name,
+             iface = c.iface, comp = c.comp, key = c.key, jagex = c.jagex,
+             quarantined = false, truncated = false }
+  end
+  local function owned(h, handle) local c = ui.comps[handle]; return c and c.owner == h and c or nil end
+  local function push(h, ev)
+    ui.events[h] = ui.events[h] or {}
+    table.insert(ui.events[h], ev)
+  end
+  -- The common start of every verb: the host marks the connection used, and the toy agent may
+  -- play a timeout.
+  local function begin(fn, h, ...)
+    record(fn, h, ...)
+    ui.used[h] = true
+    if ui.timeout then ui.timeout = false; return false end
+    return true
+  end
+  local function check_props(c, props)
+    for k, v in pairs(props or {}) do
+      if UI_FORBIDDEN_PROPS[k] then return UI_FORBIDDEN end
+      if UI_LATER_PROPS[k] then return "ui prop not supported yet: " .. k end
+      local kind = UI_PROPS[k]
+      if not kind then return "ui: unknown prop" end
+      if not ui_type_ok(kind, v) then return "ui: prop value has the wrong type or is out of range" end
+      if (k == "line_width" or k == "line_invert") and c.type_name ~= "line" then
+        return "ui: line_width / line_invert apply to line components only"
+      end
+      if k == "text" and c.type_name ~= "text" then return "ui: text applies to text components only" end
+    end
+    return nil
+  end
+  local function apply(c, props)
+    for k, v in pairs(props or {}) do c.props[k] = v end
+  end
+  -- Remove a component and (as the game does) its children, which are announced to their owner
+  -- as parent_gone. With `reason`, the component itself is announced too.
+  local function remove(handle, reason)
+    local c = ui.comps[handle]
+    if not c then return 0 end
+    ui.comps[handle] = nil
+    if reason then
+      push(c.owner, { handle = handle, hook = "destroyed", reason = reason, truncated = false })
+    end
+    local n = 1
+    for h2, child in pairs(ui.comps) do
+      if child.parent == handle then n = n + remove(h2, "parent_gone") end
+    end
+    return n
+  end
+  local function timed_out() return nil, "rpc_timeout", "timeout" end
+
+  function bwu.ui_get_component(h, iface, comp, key)
+    if not begin("ui_get_component", h, iface, comp, key) then return timed_out() end
+    local found
+    if key == nil or key < 0 then
+      if not ui.jagex[iface .. ":" .. comp] then return refuse("ui: component not found") end
+    else
+      for _, c in pairs(ui.comps) do
+        if not c.jagex and c.iface == iface and c.comp == comp and c.key == key then found = c end
+      end
+      if not found then return refuse("ui: component not found") end
+    end
+    local want_key = (key == nil or key < 0) and -1 or key
+    for _, c in pairs(ui.comps) do
+      if c.jagex and c.owner == h and c.iface == iface and c.comp == comp and c.key == want_key then
+        return info(c)
+      end
+    end
+    local handle = ui.next_handle
+    ui.next_handle = handle + 1
+    ui.comps[handle] = { handle = handle, owner = h, parent = 0, jagex = true, iface = iface,
+                         comp = comp, key = want_key, type = found and found.type or 20,
+                         type_name = found and found.type_name or "layer", props = {} }
+    return info(ui.comps[handle])
+  end
+
+  function bwu.ui_create(h, parent, type_name, props, opts)
+    if not begin("ui_create", h, parent, type_name, props, opts) then return timed_out() end
+    local p = owned(h, parent)
+    if not p then return refuse(UI_UNKNOWN_PARENT) end
+    if UI_LATER_TYPES[type_name] then return refuse("ui type not supported yet: " .. type_name) end
+    if not UI_TYPES[type_name] then return refuse("ui: unknown type") end
+    opts = opts or {}
+    if opts.category == 0 then return refuse("ui: bad_param category (1..234)") end
+    local c = { owner = h, parent = parent, jagex = false, iface = p.iface, comp = p.comp,
+                type = UI_TYPES[type_name], type_name = type_name, props = {}, elements = {} }
+    local why = check_props(c, props)
+    if why then return refuse(why) end
+    local handle = ui.next_handle
+    ui.next_handle = handle + 1
+    c.handle = handle
+    c.key = (((opts.category or 1) + 15) << 8) + (opts.dynamic or (handle % 256))
+    apply(c, props)
+    ui.comps[handle] = c
+    return info(c)
+  end
+
+  -- The handle a verb that edits may act on, or nil and the refusal.
+  local function editable(h, handle)
+    local c = owned(h, handle)
+    if c and c.jagex then return nil, UI_READ_ONLY end
+    if not c then return nil, UI_UNKNOWN end
+    return c
+  end
+
+  function bwu.ui_set(h, handle, props)
+    if not begin("ui_set", h, handle, props) then return timed_out() end
+    local c, err = editable(h, handle)
+    if not c then return refuse(err) end
+    local why = check_props(c, props)
+    if why then return refuse(why) end
+    apply(c, props)
+    return true
+  end
+
+  function bwu.ui_get(h, handle, with_content)
+    if not begin("ui_get", h, handle, with_content) then return timed_out() end
+    local c = owned(h, handle)
+    if not c then return refuse(UI_UNKNOWN) end
+    local r, pr, t = info(c), c.props, c.type_name
+    r.x, r.y, r.width, r.height = pr.x or 0, pr.y or 0, pr.width or 0, pr.height or 0
+    r.rgba = pr.rgba or 0xFFFFFFFF
+    r.visible, r.restricted, r.clickthrough = true, false, pr.clickthrough or false
+    r.num_elements = t == "canvas" and #c.elements or -1
+    r.line_width = t == "line" and (pr.line_width or 1) or -1
+    r.line_invert = t == "line" and (pr.line_invert and 1 or 0) or -1
+    r.fill = t == "rectangle" and (pr.fill and 1 or 0) or -1
+    r.outline_thickness = t == "rectangle" and (pr.outline_thickness or 1) or -1
+    r.use_count, r.op_flags_read, r.op_mask, r.op_target = 2, true, 0, -1
+    if with_content then
+      if t ~= "text" then return refuse("ui: content is readable on text components only") end
+      r.content, r.content_truncated = pr.text or "", false
+    end
+    return r
+  end
+
+  local function check_op(op)
+    if op.op == "text" or op.op == "sprite" then return "ui canvas op not supported yet (text / sprite)" end
+    local args = UI_CANVAS_ARGS[op.op]
+    if not args then return "ui.canvas: unknown op" end
+    local n = 0
+    for k, v in pairs(op) do
+      if k ~= "op" then
+        n = n + 1
+        if math.type(v) ~= "integer" then return "ui.canvas: op arguments are integers" end
+      end
+    end
+    if n ~= #args then return "ui.canvas: wrong arguments for op" end
+    for _, a in ipairs(args) do
+      if op[a] == nil then return "ui.canvas: wrong arguments for op" end
+    end
+    return nil
+  end
+
+  function bwu.ui_canvas(h, handle, ops)
+    if type(ops) ~= "table" or #ops < 1 or #ops > bwu.UI_CANVAS_OPS_MAX then
+      error("bad argument #3 to 'ui_canvas' (1..128 ops)", 2)
+    end
+    if not begin("ui_canvas", h, handle, ops) then return timed_out() end
+    local c, err = editable(h, handle)
+    if not c then return refuse(err) end
+    if c.type_name ~= "canvas" then return refuse("ui: handle is not a canvas") end
+    for _, op in ipairs(ops) do
+      local why = check_op(op)
+      if why then return refuse(why) end   -- nothing applied
+    end
+    for _, op in ipairs(ops) do
+      if op.op == "clear" then c.elements = {}
+      elseif op.op == "undo" then table.remove(c.elements)
+      else c.elements[#c.elements + 1] = op end
+    end
+    return #c.elements
+  end
+
+  function bwu.ui_order(h, handle, to)
+    if not begin("ui_order", h, handle, to) then return timed_out() end
+    local c, err = editable(h, handle)
+    if not c then return refuse(err) end
+    if to ~= "front" and to ~= "back" then return refuse("ui: bad_param to") end
+    c.order = to
+    return true
+  end
+
+  function bwu.ui_destroy(h, handle)
+    if not begin("ui_destroy", h, handle) then return timed_out() end
+    local c, err = editable(h, handle)
+    if not c then return refuse(err) end
+    remove(handle, nil)
+    return true
+  end
+
+  local function drop_all(h)
+    local n = 0
+    for handle, c in pairs(ui.comps) do
+      if c.owner == h then
+        if not c.jagex then n = n + 1 end
+        ui.comps[handle] = nil
+      end
+    end
+    return n
+  end
+
+  function bwu.ui_destroy_all(h)
+    if not begin("ui_destroy_all", h) then return timed_out() end
+    return drop_all(h)
+  end
+
+  function bwu.ui_list(h)
+    if not begin("ui_list", h) then return timed_out() end
+    local out = {}
+    for _, c in pairs(ui.comps) do
+      if c.owner == h then out[#out + 1] = info(c) end
+    end
+    table.sort(out, function(a, b) return a.handle < b.handle end)
+    return out
+  end
+
+  function bwu.ui_poll_events(h)
+    ui.polls = (ui.polls or 0) + 1
+    if ui.poll_error then error("bwu.ui_poll_events: " .. ui.poll_error, 2) end
+    local list = ui.events[h] or {}
+    ui.events[h] = {}
+    return list
+  end
+
+  -- Test hooks ------------------------------------------------------------------------------
+  function ui.game_destroy(handle, reason) return remove(handle, reason or "removed") end
+  function ui.overflow(h, n)
+    push(h, { handle = 0, hook = "overflow", reason = "", truncated = false, dropped = n })
+  end
+  -- What the host does at detach: one ui.destroy_all on this host's own connection, if it used
+  -- the ui (host_surface.cpp ReleaseUi). Counts what it found left.
+  function ui.host_release(h)
+    if not ui.used[h] then return end
+    record("host_release", h)
+    ui.host_released = (ui.host_released or 0) + drop_all(h)
+  end
+  -- The calls of one bwu.ui_* function, in order.
+  function ui.calls_of(fn)
+    local out = {}
+    for _, c in ipairs(ui.calls) do
+      if c.fn == fn then out[#out + 1] = c end
+    end
+    return out
+  end
+  -- How many non-Jagex components a connection owns.
+  function ui.live(h)
+    local n = 0
+    for _, c in pairs(ui.comps) do
+      if c.owner == h and not c.jagex then n = n + 1 end
+    end
+    return n
+  end
   return bwu
 end
 

@@ -113,8 +113,9 @@ end
 -- the Game then answers refresh() with (false, "detached", reason) and raises on reads.
 function Game:_release(reason)
   if not self._host then return end
-  surface().detach(self._host)
+  surface().detach(self._host)   -- the host releases this connection's plugin UI here
   self._host = nil
+  if self._ui then self._ui:detached() end
   self._detached_reason = reason
   local on_detach = self._on_detach
   self._on_detach = nil
@@ -171,6 +172,8 @@ end
 -- The runner's end of a run: a Game whose client exited is released with DETACHED_EXITED
 -- (whoever owns it), otherwise it is detached when the runner owns it.
 function Game:_end_run(owned)
+  -- The run's plugin UI goes with the run, whoever keeps the Game (see botwithus.game_ui).
+  if self._ui then self._ui:release() end
   if self._exited then
     self:_release(Game.DETACHED_EXITED)
   elseif owned then
@@ -691,6 +694,22 @@ end
 -- type as its raw { type, body } record. Reading drains the host's ring for this client.
 function Game:poll_events()
   return Events.decode_all(surface().poll_events(host(self)))
+end
+
+-- Plugin UI ------------------------------------------------------------------------------
+
+-- This Game's plugin-UI namespace, shaped like Jagex's `ui.*` (see botwithus/game_ui.lua):
+-- ui.Canvas.new(parent), ui.Interfaces:GetComponent(iface, comp), comp:SetPos(x, y) ...
+-- One per Game; creating it calls nothing.
+function Game:ui()
+  if not self._ui then self._ui = require("botwithus.game_ui").new(self) end
+  return self._ui.ns
+end
+
+-- Read this Game's queued ui events, if it has used the ui (the runner calls this once per
+-- server tick). Never waits; a failure is logged, not raised.
+function Game:_pump_ui()
+  if self._ui then self._ui:pump() end
 end
 
 -- Breaks ---------------------------------------------------------------------------------

@@ -88,6 +88,7 @@ local function sleep_ticks(game, wait, n)
     if now - start >= n then return true end
     if now ~= last then
       last, stalled_ms, suspect = now, 0, false
+      game:_pump_ui()   -- plugin-UI events, once per server tick (never waits)
     else
       stalled_ms = stalled_ms + TICK_POLL_MS
       if stalled_ms >= STALL_CHECK_MS then
@@ -108,6 +109,8 @@ Script._sleep_ticks = sleep_ticks
 
 local function make_ctx(game, wait, clients)
   local ctx = { game = game, clients = clients, config = {} }
+  -- The plugin-UI namespace, shaped like Jagex's `ui.*` (botwithus/game_ui.lua).
+  if game.ui then ctx.ui = game:ui() end
   -- Wait until server_tick advances by n. Returns true when it did, false when the run is
   -- stopping or its client exited (see sleep_ticks above). n <= 0 returns at once.
   function ctx:sleep_ticks(n) return sleep_ticks(game, wait, n) end
@@ -273,6 +276,7 @@ local function lifecycle(script, ctx, game, opts, progress)
   local iters = 0
   while not Ctl.stopping() do
     if game:_client_gone() then break end
+    game:_pump_ui()
     progress.iteration = iters + 1
     local delay = script.on_loop(ctx)
     if ends_loop(delay) then break end
