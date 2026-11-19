@@ -924,10 +924,9 @@ T["run: a GUI run destroys its plugin UI at the end, then the host releases at d
   })
   local b = run_plugin(p)
   local f = b._ui
-  local destroys = f.calls_of("ui_destroy")
-  assert_(#destroys == 2 and destroys[1].args[2] == made[2].handle
-    and destroys[2].args[2] == made[1].handle, "one ui.destroy each, newest first")
-  assert_(#f.calls_of("ui_destroy_all") == 0, "the framework never sends ui.destroy_all")
+  local alls = f.calls_of("ui_destroy_all")
+  assert_(#alls == 1 and #f.calls_of("ui_destroy") == 0, "one ui.destroy_all, no per-handle destroy")
+  assert_(made[1]:IsDestroyed() and made[2]:IsDestroyed(), "both forgotten")
   assert_(#f.calls_of("host_release") == 1 and f.host_released == 0, "the host's release found nothing")
   assert_(#crashes(b) == 0, "no crash")
 end

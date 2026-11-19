@@ -45,9 +45,9 @@ bot.run({
 | `ui.Canvas.new(parent, categoryID?, dynamicID?)`, and `Rectangle`, `Line`, `Text`, `Layer` | the same |
 | `ui.Interfaces:GetComponent(combinedID)` / `(interfaceID, staticID)` | the same; returns nil (and the agent's message) when the component is not there |
 | `SetX`, `SetY`, `SetPos`, `SetWidth`, `SetHeight`, `SetSize` (with the percentage arguments) | the same |
-| `MoveToFront()`, `MoveToBack()`, `Destroy()` | the same; `Destroy()` returns whether the component was freed, and a second call sends nothing |
+| `MoveToFront()`, `MoveToBack()`, `Destroy()` | the same; `Destroy()` returns whether the component was freed, and a second call sends nothing. If the game already took it down (its `destroyed` event not read yet) it returns `false`, runs its `DESTROYED` callbacks with reason `removed`, and does not raise; only a timeout raises |
 | `comp.rgba`, `comp.clickthrough` | the same, read and write |
-| `comp.x`, `.y`, `.width`, `.height`, `.visible` | read-only, read back from the game |
+| `comp.x`, `.y`, `.width`, `.height`, `.visibleGlobal`, `.isRestricted` | read-only, read back from the game. `visible` (the component's own visibility) has no wire form yet and raises "not supported yet" |
 | `Line.width`, `Line.invert` | the same (the stroke width, as in Jagex's API) |
 | `Rectangle.fill`, `Rectangle.outlineThickness` | the same |
 | `Text.content` | the same, read and write |
@@ -66,7 +66,9 @@ Additions of ours:
   in their wire form.
 - `ui.Interfaces:GetComponentByKey(interfaceID, staticID, key)` looks up a dynamic child by
   the key a component reports (`comp.key`).
-- `comp.isJagex`, `comp.key`, `comp.typeName`, `comp:IsDestroyed()`.
+- `comp.isJagex`, `comp.key`, `comp.typeName`, `comp:IsDestroyed()`, and `comp.isQuarantined`:
+  true when the agent could not remove the component and keeps retrying (it then refuses every
+  other call on it).
 - `ui:on_event(fn)`, `ui:poll()`, `ui:list()`, `ui:components()`, `ui:release()`.
 
 Colours are always `0xRRGGBBAA` integers.
@@ -75,7 +77,8 @@ Colours are always `0xRRGGBBAA` integers.
 
 These raise an error whose `kind` is `"unsupported"` (nothing is sent):
 `Canvas:AddText`, `Canvas:AddSprite`, `Vector4` colours, `comp.colour` / `comp.alpha` /
-`comp.rgb`, hooks other than `DESTROYED`, `ui.Interfaces:GetInterface`, the
+`comp.rgb`, `comp.visible`, hooks other than `DESTROYED` (every Jagex hook name is in
+`ui.Hook`, so `ui.Hook.ONCLICK` is never nil; `Subscribe` refuses it), `ui.Interfaces:GetInterface`, the
 `GetComponent(..., categoryID, dynamicID)` forms, and the collection and layout methods
 (`GetChild`, `SetAspectRatio`, ...).
 
@@ -104,26 +107,41 @@ if not ok and ui.is_error(err) then print(err.kind, err.message) end
 ```
 
 `err.message` is the agent's text, verbatim. `ui.Interfaces:GetComponent` is the one call that
-returns instead: `nil, message, kind` when the component is not there.
+returns instead: `nil, message, kind`. Its third value tells the cases apart: `"refused"` means
+the component is not there, `"timeout"` means no answer came. Passing that `nil` on as a parent
+raises kind `"refused"` with `"parent is nil (GetComponent found nothing?)"`, and sends nothing.
+
+Jagex's interaction configurations (`opConfig`, `dragConfig`, `swipeConfig`, `pinchConfig`,
+`cursorConfig`, `paramsConfig`, `FlagRestricted`) raise kind `"refused"` with the agent's own
+text, `ui: prop forbidden on agent components (no op, drag or target configuration)`, without a
+call: the agent never puts them on a component it made.
 
 ## Lifetime
 
-Components belong to the Game's own connection to the agent. When a `bot.run` (or a GUI run)
-ends, the framework destroys every component that Game's `ui` made, one `ui.destroy` each,
-newest first, before it detaches. The host then releases anything left on the same connection
-when it detaches, and the agent when the connection closes. The framework never asks the agent
-to destroy "everything", so another connection's components are never touched.
+Components belong to the Game's own connection to the agent; no other Game or script shares
+it. When a `bot.run` (or a GUI run) ends, the framework releases them with **one**
+`ui.destroy_all` on that connection, before it detaches. One call, so a stalled agent costs a
+single timeout however many components there are. Every component it held is then forgotten as
+`released` and its `DESTROYED` callbacks run, whatever the agent answered. The host releases
+again when it detaches (finding nothing), and the agent when the connection closes. Because the
+connection is the Game's own, another connection's components are never touched.
+`comp:Destroy()` is the only per-component destroy.
 
 The game can also take a component down: its parent closed (on logout, for example), or the
 agent removed it for safety. That arrives as a `destroyed` event with a `reason`
 (`parent_gone`, `removed`, `server_events`, `interface_unreadable`). The component is then
 forgotten, so it is never destroyed twice, and `comp:IsDestroyed()` returns `true, reason`.
+A `Destroy()` that races that event is refused by the agent and handled the same way (reason
+`removed`).
 
 ## Events
 
 Each event is `{ kind = "ui", name = "ui", pid, handle, hook, reason, truncated, component }`,
 plus the hook's own fields. Hook `"overflow"` (handle 0, `dropped = n`) reports events the
-host had to drop.
+host had to drop. On an overflow the framework logs it, asks the agent for this connection's
+handles (`ui.list`), and forgets every held component the agent no longer lists, running its
+`DESTROYED` callbacks with reason `unknown`. One read hands over at most 32 events, so the
+framework reads again until a read comes back short.
 
 They are read without waiting, from three places:
 

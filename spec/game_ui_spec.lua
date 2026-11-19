@@ -361,24 +361,47 @@ local function ui_script(made)
   }
 end
 
-T["ui: the end of a run destroys exactly its components, newest first, before the host's release"] = function(assert_)
+T["ui: the end of a run releases with one ui.destroy_all, before the host's own release"] = function(assert_)
   local b = fake_bwu.new()
   _G.bwu = b
   local f = b._ui
-  local made = {}
-  bot.run(ui_script(made), { max_iters = 1 })
-  local destroys = f.calls_of("ui_destroy")
-  assert_(#destroys == 4, "one ui.destroy per component: " .. #destroys)
-  for i, d in ipairs(destroys) do
-    assert_(d.args[2] == made[#made + 1 - i].handle, "newest first (children before parents)")
+  local made, reasons = {}, {}
+  local script = ui_script(made)
+  script.on_loop = function()
+    for _, c in ipairs(made) do
+      c:Subscribe("destroyed", function(_, r) reasons[#reasons + 1] = r end)
+    end
+    return -1
   end
-  assert_(#f.calls_of("ui_destroy_all") == 0, "the framework never sends ui.destroy_all")
+  bot.run(script, { max_iters = 1 })
+  assert_(#f.calls_of("ui_destroy_all") == 1, "one ui.destroy_all")
+  assert_(#f.calls_of("ui_destroy") == 0, "no per-handle destroys")
+  assert_(#reasons == 4 and reasons[1] == "released", "every component's DESTROYED ran: released")
+  for _, c in ipairs(made) do assert_(c:IsDestroyed(), "forgotten") end
   local release = f.calls_of("host_release")
   assert_(#release == 1 and f.host_released == 0, "the host's release found nothing left")
   assert_(f.calls[#f.calls].fn == "host_release", "the host released last, at detach")
 end
 
-T["ui: a run on a caller's Game cleans up its UI and leaves another connection's alone"] = function(assert_)
+T["ui: on a stalled agent the end-of-run release costs one call, not one per component"] = function(assert_)
+  local b = fake_bwu.new()
+  _G.bwu = b
+  local f = b._ui
+  local made = {}
+  bot.run({
+    manifest = { name = "ui", version = "1", author = "t" },
+    on_start = function(ctx)
+      local area = ctx.ui.Interfaces:GetComponent(IFACE, COMP)
+      for i = 1, 20 do made[i] = ctx.ui.Layer.new(area) end
+    end,
+    on_loop = function() f.stalled = true; return -1 end,
+  }, { max_iters = 1 })
+  assert_(f.stalled_calls == 1, "one stalled call: " .. tostring(f.stalled_calls))
+  assert_(f.stalled_ms <= 5000, "a stop costs one timeout: " .. tostring(f.stalled_ms) .. " ms")
+  for _, c in ipairs(made) do assert_(c:IsDestroyed(), "all forgotten anyway") end
+end
+
+T["ui: a run on a caller's Game releases on its own connection and leaves another's alone"] = function(assert_)
   local b = fake_bwu.new()
   _G.bwu = b
   local f = b._ui
@@ -389,39 +412,34 @@ T["ui: a run on a caller's Game cleans up its UI and leaves another connection's
   assert_(game:is_attached(), "the caller keeps its Game")
   assert_(f.live(game._host) == 0, "the run's components are gone")
   assert_(f.live(other._host) == 1 and not keep:IsDestroyed(), "the other connection's stay")
-  assert_(#f.calls_of("ui_destroy_all") == 0 and #f.calls_of("host_release") == 0, "no blanket release")
+  local alls = f.calls_of("ui_destroy_all")
+  assert_(#alls == 1 and alls[1].args[1] == game._host, "the one release went on the run's connection")
 end
 
-T["ui: the end of a run skips what the game already took down"] = function(assert_)
+T["ui: what the game already took down keeps its own reason at the end-of-run release"] = function(assert_)
   local b = fake_bwu.new()
   _G.bwu = b
   local f = b._ui
-  local made = {}
+  local made, reasons = {}, {}
   local script = ui_script(made)
   script.on_loop = function()
+    for i, c in ipairs(made) do
+      c:Subscribe("destroyed", function(_, r) reasons[i] = (reasons[i] or "") .. r end)
+    end
     f.game_destroy(made[1].handle, "parent_gone")   -- the layer and its rectangle
     return -1
   end
   bot.run(script, { max_iters = 1 })
-  local destroyed = {}
-  for _, d in ipairs(f.calls_of("ui_destroy")) do destroyed[d.args[2]] = true end
-  assert_(not destroyed[made[1].handle] and not destroyed[made[2].handle], "gone ones skipped")
-  assert_(destroyed[made[3].handle] and destroyed[made[4].handle], "the rest destroyed")
-  assert_(#f.calls_of("ui_destroy") == 2, "two destroys")
+  assert_(reasons[1] == "parent_gone" and reasons[2] == "parent_gone", "taken down by the game, once")
+  assert_(reasons[3] == "released" and reasons[4] == "released", "the rest released")
 end
 
-T["ui: a refusal during the end-of-run release is not an error"] = function(assert_)
-  local b = fake_bwu.new()
-  _G.bwu = b
-  local f = b._ui
-  local made = {}
-  local script = ui_script(made)
-  script.on_loop = function()
-    f.comps[made[3].handle] = nil   -- gone in the game with no event (a quarantine, a race)
-    return -1
-  end
-  bot.run(script, { max_iters = 1 })
-  assert_(#f.calls_of("ui_destroy") == 4, "still tried each one")
+T["ui: an exited client gets no release call"] = function(assert_)
+  local _, game, ui, f = setup()
+  local layer = ui.Layer.new(ui.Interfaces:GetComponent(IFACE, COMP))
+  game:_mark_exited()
+  assert_(ui:release() == 0, "nothing sent")
+  assert_(#f.calls_of("ui_destroy_all") == 0 and not layer:IsDestroyed(), "no call, nothing forgotten")
 end
 
 T["ui: the runner reads ui events once per tick, so callbacks run during a run"] = function(assert_)
@@ -522,6 +540,218 @@ T["ui: a manager stops reading a Game's ui events once it is detached"] = functi
   local polls = b._ui.polls or 0
   cm:poll(0)
   assert_((b._ui.polls or 0) == polls, "no poll on a released claim")
+end
+
+-- Review fixes ---------------------------------------------------------------------------------
+
+T["ui: Destroy after the game removed it (event not read yet) forgets it and returns false"] = function(assert_)
+  local _, _, ui, f = setup()
+  local layer = ui.Layer.new(ui.Interfaces:GetComponent(IFACE, COMP))
+  local reasons = {}
+  layer:Subscribe(ui.Hook.DESTROYED, function(_, r) reasons[#reasons + 1] = r end)
+  f.game_destroy(layer.handle, "parent_gone")   -- queued, not polled
+  local ok, freed = pcall(layer.Destroy, layer)
+  assert_(ok, "no raise: " .. tostring(freed))
+  assert_(freed == false and layer:IsDestroyed(), "returns false and is forgotten")
+  assert_(#reasons == 1 and reasons[1] == "removed", "DESTROYED ran with removed")
+  ui:poll()   -- the late event for it
+  assert_(#reasons == 1, "the late event does not run the callbacks again")
+  assert_(layer:Destroy() == false and #f.calls_of("ui_destroy") == 1, "and nothing more is sent")
+end
+
+T["ui: Destroy still raises on a timeout and keeps the component"] = function(assert_)
+  local _, _, ui, f = setup()
+  local layer = ui.Layer.new(ui.Interfaces:GetComponent(IFACE, COMP))
+  f.timeout = true
+  local err = raised(assert_, layer.Destroy, layer)
+  assert_(err.kind == "timeout" and not layer:IsDestroyed(), "outcome unknown: kept")
+end
+
+T["ui: Destroy on a Jagex component raises the read-only refusal and keeps it"] = function(assert_)
+  local _, _, ui = setup()
+  local area = ui.Interfaces:GetComponent(IFACE, COMP)
+  local err = raised(assert_, area.Destroy, area)
+  assert_(err.message == fake_bwu.UI_READ_ONLY and not area:IsDestroyed(), tostring(err))
+end
+
+T["ui: Jagex's interaction configs raise the agent's forbidden refusal without a call"] = function(assert_)
+  local _, _, ui, f = setup()
+  local layer = ui.Layer.new(ui.Interfaces:GetComponent(IFACE, COMP))
+  local before = #f.calls
+  for _, name in ipairs({ "opConfig", "dragConfig", "swipeConfig", "pinchConfig", "cursorConfig",
+                          "paramsConfig", "FlagRestricted" }) do
+    local err = raised(assert_, function() layer[name] = 1 end)
+    assert_(err.kind == "refused" and err.message == fake_bwu.UI_FORBIDDEN, name .. ": " .. tostring(err))
+    err = raised(assert_, function() return layer[name] end)
+    assert_(err.kind == "refused", name .. " read")
+  end
+  assert_(GameUi.FORBIDDEN_TEXT == fake_bwu.UI_FORBIDDEN, "the host's exact text")
+  assert_(#f.calls == before, "nothing sent")
+end
+
+T["ui: one poll reads every queued event, past the binding's 32 per call"] = function(assert_)
+  local _, _, ui, f = setup()
+  local area = ui.Interfaces:GetComponent(IFACE, COMP)
+  for _ = 1, 40 do ui.Layer.new(area) end
+  for _, c in ipairs(ui:components()) do f.game_destroy(c.handle, "parent_gone") end
+  local before = f.polls or 0
+  local events = ui:poll()
+  assert_(#events == 40, "all 40: " .. #events)
+  assert_((f.polls or 0) - before == 2, "32, then 8 (fewer than 32 ends it)")
+  assert_(#ui:components() == 0, "all forgotten")
+end
+
+T["ui: an overflow reconciles with ui.list: held handles it no longer lists are gone"] = function(assert_)
+  local _, game, ui, f = setup()
+  local area = ui.Interfaces:GetComponent(IFACE, COMP)
+  local lost = ui.Layer.new(area)
+  local kept = ui.Layer.new(area)
+  local reason
+  lost:Subscribe(ui.Hook.DESTROYED, function(_, r) reason = r end)
+  f.comps[lost.handle] = nil            -- gone, and its destroyed event was dropped
+  f.overflow(game._host, 1)
+  local lines = capture_stderr(function() ui:poll() end)
+  assert_(lost:IsDestroyed() and reason == "unknown", "the missing one is gone: unknown")
+  assert_(not kept:IsDestroyed() and not area:IsDestroyed(), "listed ones stay")
+  assert_(#f.calls_of("ui_list") == 1, "one ui.list")
+  assert_(#lines >= 1 and lines[1]:find("dropped", 1, true), "the overflow is logged")
+end
+
+T["ui: a nil parent raises kind refused, with a hint, and sends nothing"] = function(assert_)
+  local _, _, ui, f = setup()
+  local area = ui.Interfaces:GetComponent(9999, 1)   -- not there
+  local before = #f.calls
+  local err = raised(assert_, ui.Layer.new, area)
+  assert_(GameUi.is_error(err) and err.kind == "refused"
+    and err.message == "parent is nil (GetComponent found nothing?)", tostring(err))
+  assert_(#f.calls == before, "nothing sent")
+  f.timeout = true
+  local comp, _, kind = ui.Interfaces:GetComponent(IFACE, COMP)
+  assert_(comp == nil and kind == "timeout", "the third value tells a timeout from not found")
+end
+
+T["ui: visibleGlobal and isRestricted use Jagex's names; local visible is unsupported"] = function(assert_)
+  local _, _, ui = setup()
+  local text = ui.Text.new(ui.Interfaces:GetComponent(IFACE, COMP))
+  assert_(text.visibleGlobal == true and text.isRestricted == false and text.isQuarantined == false,
+    "readback names")
+  local err = raised(assert_, function() return text.visible end)
+  assert_(err.kind == "unsupported", "visible (local) has no wire form yet")
+end
+
+T["ui: ui.Hook lists every Jagex hook; Subscribe raises for any but DESTROYED"] = function(assert_)
+  local _, _, ui = setup()
+  for _, name in ipairs({ "ONCLICK", "ONSWIPEVERTICAL", "ONCUTSCENEFINISHED", "ONTARGETLEAVE",
+                          "ONVARPTRANSMIT", "ONCAMERAUPDATETRANSMIT", "ONDIALOGABORT",
+                          "ONGAMEPADTRIGGER" }) do
+    assert_(ui.Hook[name] ~= nil, name)
+  end
+  local count = 0
+  for k in pairs(ui.Hook) do if k ~= "DESTROYED" then count = count + 1 end end
+  assert_(count == #GameUi.JAGEX_HOOKS and count == 51, "51 Jagex hooks: " .. count)
+  local layer = ui.Layer.new(ui.Interfaces:GetComponent(IFACE, COMP))
+  local err = raised(assert_, layer.Subscribe, layer, ui.Hook.ONVARPTRANSMIT, function() end)
+  assert_(err.kind == "unsupported", tostring(err))
+end
+
+-- Tests that kill surviving mutants -------------------------------------------------------------
+
+T["ui: a failing Subscribe callback is logged; later callbacks and the poll go on"] = function(assert_)
+  local _, _, ui, f = setup()
+  local layer = ui.Layer.new(ui.Interfaces:GetComponent(IFACE, COMP))
+  local second = false
+  layer:Subscribe(ui.Hook.DESTROYED, "a", function() error("boom") end)
+  layer:Subscribe(ui.Hook.DESTROYED, "b", function() second = true end)
+  f.game_destroy(layer.handle)
+  local ok
+  local lines = capture_stderr(function() ok = pcall(ui.poll, ui) end)
+  assert_(ok and second, "the poll did not raise and the next callback ran")
+  assert_(#lines == 1 and lines[1]:find("boom", 1, true), "logged")
+end
+
+T["ui: a failing on_event listener is logged; later listeners still run"] = function(assert_)
+  local _, _, ui, f = setup()
+  local layer = ui.Layer.new(ui.Interfaces:GetComponent(IFACE, COMP))
+  local second = false
+  ui:on_event(function() error("bad listener") end)
+  ui:on_event(function() second = true end)
+  f.game_destroy(layer.handle)
+  local ok
+  local lines = capture_stderr(function() ok = pcall(ui.poll, ui) end)
+  assert_(ok and second, "no raise, and the next listener ran")
+  assert_(#lines == 1 and lines[1]:find("bad listener", 1, true), "logged")
+end
+
+T["ui: a component of another Game is refused as a parent before any call"] = function(assert_)
+  local b = fake_bwu.new()
+  _G.bwu = b
+  local f = b._ui
+  local a = bot.Game.attach(4242)
+  local other = bot.Game.attach(4242)
+  local layer = a:ui().Layer.new(a:ui().Interfaces:GetComponent(IFACE, COMP))
+  local creates = #f.calls_of("ui_create")
+  local ok, err = pcall(other:ui().Layer.new, layer)
+  assert_(not ok and tostring(err):find("another game", 1, true), tostring(err))
+  assert_(#f.calls_of("ui_create") == creates, "nothing sent on the other connection")
+end
+
+T["ui: the run loop reads ui events every iteration, even with on_loop returning 0"] = function(assert_)
+  local b = fake_bwu.new()
+  _G.bwu = b
+  local f = b._ui
+  local layer, seen_in_iter2
+  local iters = 0
+  bot.run({
+    manifest = { name = "ui", version = "1", author = "t" },
+    on_start = function(ctx)
+      layer = ctx.ui.Layer.new(ctx.ui.Interfaces:GetComponent(IFACE, COMP))
+    end,
+    on_loop = function()
+      iters = iters + 1
+      if iters == 1 then f.game_destroy(layer.handle, "removed"); return 0 end
+      seen_in_iter2 = layer:IsDestroyed()
+      return -1
+    end,
+  }, { max_iters = 5 })
+  assert_(seen_in_iter2 == true, "read at the top of the next iteration (no sleep in between)")
+end
+
+T["ui: a manager's listener is removed from a Game it no longer holds"] = function(assert_)
+  local b = fake_bwu.new()
+  _G.bwu = b
+  local cm = bot.clients.new()
+  local game = assert(cm:attach_pid(4242))
+  game:ui().Layer.new(game:ui().Interfaces:GetComponent(IFACE, COMP))
+  game:detach()
+  game._ui:dispatch({ handle = 999, hook = "destroyed", reason = "removed", truncated = false })
+  assert_(#cm._ui_queue == 0, "nothing queued for the manager after detach")
+end
+
+T["ui: a manager hands out a queued ui event without waiting on the service"] = function(assert_)
+  local b = fake_bwu.new()
+  _G.bwu = b
+  local cm = bot.clients.new()
+  local game = assert(cm:attach_pid(4242))
+  local layer = game:ui().Layer.new(game:ui().Interfaces:GetComponent(IFACE, COMP))
+  b._ui.game_destroy(layer.handle, "removed")
+  local waits = #b._cm.polls
+  local ev = cm:poll(500)
+  assert_(ev and ev.kind == "ui" and ev.handle == layer.handle, "the ui event")
+  assert_(#b._cm.polls == waits, "no wait on the service queue")
+end
+
+T["ui: a ui event that arrives during the service wait is handed out by that poll"] = function(assert_)
+  local b = fake_bwu.new()
+  _G.bwu = b
+  local cm = bot.clients.new()
+  local game = assert(cm:attach_pid(4242))
+  local layer = game:ui().Layer.new(game:ui().Interfaces:GetComponent(IFACE, COMP))
+  b._cm.on_poll = function(c)
+    c.on_poll = nil
+    b._ui.game_destroy(layer.handle, "parent_gone")   -- arrives while the poll waits
+  end
+  local ev = cm:poll(200)
+  assert_(ev and ev.kind == "ui" and ev.reason == "parent_gone", "returned by the same poll")
 end
 
 return T

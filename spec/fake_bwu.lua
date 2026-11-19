@@ -327,7 +327,8 @@ end
 -- is one attach's host table), Jagex handles usable only as parents and ui.get targets, the
 -- forbidden props, category 0, the types and canvas ops not supported yet. A refusal returns
 -- nil, text, "refused"; `ui.timeout = true` makes the next call return nil, "rpc_timeout",
--- "timeout". Test hooks: ui.game_destroy(handle, reason) plays the game taking a component
+-- "timeout", and `ui.stalled = true` every call (counted in ui.stalled_calls). Polls hand over
+-- at most 32 events each, as the binding does. Test hooks: ui.game_destroy(handle, reason) plays the game taking a component
 -- down (a "destroyed" event to its owner, and parent_gone for its children), ui.overflow(host, n).
 
 local UI_FORBIDDEN = "ui: prop forbidden on agent components (no op, drag or target configuration)"
@@ -361,6 +362,13 @@ local UI_CANVAS_ARGS = {
   clear = {}, undo = {},
 }
 
+-- A stalled agent (`ui.stalled = true`): every verb times out after this long, as the host's
+-- rpc timeout would. The fake does not wait; it adds the time to ui.stalled_ms.
+local UI_STALL_MS = 5000
+-- The most events one bwu.ui_poll_events call hands over (the binding's batch).
+local UI_POLL_BATCH = 32
+M.UI_POLL_BATCH = UI_POLL_BATCH
+
 local function ui_type_ok(kind, v)
   if kind == "float" then return math.type(v) == "float" end
   if kind == "integer" then return math.type(v) == "integer" end
@@ -391,6 +399,11 @@ function M.install_ui(bwu)
     record(fn, h, ...)
     ui.used[h] = true
     if ui.timeout then ui.timeout = false; return false end
+    if ui.stalled then
+      ui.stalled_calls = (ui.stalled_calls or 0) + 1
+      ui.stalled_ms = (ui.stalled_ms or 0) + UI_STALL_MS   -- what a real call would block
+      return false
+    end
     return true
   end
   local function check_props(c, props)
@@ -596,8 +609,10 @@ function M.install_ui(bwu)
   function bwu.ui_poll_events(h)
     ui.polls = (ui.polls or 0) + 1
     if ui.poll_error then error("bwu.ui_poll_events: " .. ui.poll_error, 2) end
-    local list = ui.events[h] or {}
-    ui.events[h] = {}
+    local queued = ui.events[h] or {}
+    local list = {}
+    while #list < UI_POLL_BATCH and #queued > 0 do list[#list + 1] = table.remove(queued, 1) end
+    ui.events[h] = queued
     return list
   end
 

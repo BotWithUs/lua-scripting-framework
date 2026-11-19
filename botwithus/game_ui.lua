@@ -32,15 +32,22 @@
 --   kind "unsupported"  this framework has no wire form for it yet
 -- Catch one with pcall and read err.kind / err.message. ui.Interfaces:GetComponent is the one
 -- exception: like Jagex's, it returns nil when the component is not there (with the message
--- and kind as second and third values). A lost pipe or a malformed reply raises the host's
--- own error, as every other host call does.
+-- and kind as second and third values: kind "refused" means not there, "timeout" means no
+-- answer). Passing its nil on as a parent raises kind "refused", "parent is nil (...)". A lost
+-- pipe or a malformed reply raises the host's own error, as every other host call does.
+-- Jagex's interaction configurations (opConfig, dragConfig, ...) raise the agent's refusal,
+-- kind "refused", without a call: agent components never take them.
 --
--- Lifetime. Components belong to the Game's own connection to the agent. When a bot.run ends
--- (or a GUI worker's run), the framework destroys every component that Game's ui made, one
--- ui.destroy each, before it detaches. The host then releases whatever is left on the same
--- connection at detach and at the end of the process, and the agent at pipe close; nothing
--- here ever sends ui.destroy_all. A component the game took down (its parent closed, logout)
--- is announced by a "destroyed" event and forgotten, so it is never destroyed twice.
+-- Lifetime. Components belong to the Game's own connection to the agent; no other Game and no
+-- other script shares it. When a bot.run ends (or a GUI worker's run), the framework releases
+-- them with ONE ui.destroy_all on that connection, before it detaches, and every held component
+-- is forgotten as "released" (its DESTROYED callbacks run). One call, so a stalled agent costs
+-- one timeout, not one per component. The host releases again at detach (finding nothing), and
+-- the agent at pipe close. comp:Destroy() is the only per-handle destroy. A component the game
+-- took down (its parent closed, logout) is announced by a "destroyed" event and forgotten, so
+-- it is never destroyed twice; a Destroy that races that event is refused by the agent and
+-- treated the same way. After an "overflow" (events lost), the held handles are checked
+-- against ui.list and the missing ones forgotten with reason "unknown".
 --
 -- Events. bwu.ui_poll_events never waits. It is read by ui:poll(), by bot.run once per server
 -- tick while the script sleeps, and by a botwithus.clients manager in :poll() / :pump() for
@@ -54,15 +61,51 @@ local GameUi = {}
 -- The client's ui.ComponentType values the agent reports (`type` on a component).
 local COMPONENT_TYPE = { LINE = 0, RECTANGLE = 1, LABEL = 2, CANVAS = 8, LAYER = 20 }
 
--- Jagex's hook names. Only DESTROYED (ours: the agent's ui.event) is delivered today; the rest
--- raise "not supported yet" from Subscribe until the agent pushes them.
+-- Jagex's hook names, all of them, so ui.Hook.X is never nil. Only DESTROYED (ours: the agent's
+-- ui.event) is delivered today; Subscribe raises "not supported yet" for the rest until the
+-- agent pushes them.
 local HOOK_DESTROYED = "destroyed"
 local HOOK_OVERFLOW  = "overflow"
 local JAGEX_HOOKS = {
+  -- mouse and keyboard
   "ONCLICK", "ONCLICKREPEAT", "ONRELEASE", "ONHOLD", "ONMOUSEOVER", "ONMOUSEREPEAT",
-  "ONMOUSELEAVE", "ONDRAG", "ONDRAGCOMPLETE", "ONSCROLLWHEEL", "ONKEY", "ONBUTTONPRESSED",
-  "ONCONTENTCHANGED", "ONSELECTIONCHANGED", "ONOP", "ONOPT", "ONTIMER", "ONRESIZE",
+  "ONMOUSELEAVE", "ONDRAG", "ONDRAGCOMPLETE", "ONSCROLLWHEEL", "ONKEY",
+  -- touch
+  "ONSWIPEVERTICAL", "ONSWIPEHORIZONTAL", "ONSWIPECOMPLETE", "ONPINCHHORIZONTAL",
+  "ONPINCHVERTICAL", "ONPINCHCOMPLETE",
+  -- state change
+  "ONBUTTONPRESSED", "ONCONTENTCHANGED", "ONSELECTIONCHANGED", "ONCUTSCENEFINISHED",
+  -- action
+  "ONOP", "ONOPT", "ONTARGETENTER", "ONTARGETLEAVE",
+  -- transmission
+  "ONVARPTRANSMIT", "ONINVTRANSMIT", "ONSTATTRANSMIT", "ONVARCTRANSMIT", "ONVARCSTRTRANSMIT",
+  "ONVARCLANTRANSMIT", "ONCHATTRANSMIT", "ONFRIENDTRANSMIT", "ONCLANTRANSMIT",
+  "ONCLANSETTINGSTRANSMIT", "ONCLANCHANNELTRANSMIT", "ONRELATIONSHIPSETTRANSMIT",
+  "ONMISCTRANSMIT", "ONSTOCKTRANSMIT", "ONPLAYERGROUPTRANSMIT", "ONPLAYERGROUPVARPTRANSMIT",
+  "ONCAMERAUPDATETRANSMIT",
+  -- misc
+  "ONTIMER", "ONDIALOGABORT", "ONSUBCHANGE", "ONCAMFINISHED", "ONRESIZE",
+  -- controller
+  "ONGAMEPADBUTTON", "ONGAMEPADBUTTONHELD", "ONGAMEPADAXIS", "ONGAMEPADTRIGGER",
 }
+GameUi.JAGEX_HOOKS = JAGEX_HOOKS
+
+-- The most events one bwu.ui_poll_events call hands over (the host binding's batch).
+local POLL_BATCH = 32
+GameUi.POLL_BATCH = POLL_BATCH
+
+-- Reasons this module gives a component it forgets without a destroyed event from the agent.
+local REASON_RELEASED = "released"   -- the end-of-run release
+local REASON_REMOVED  = "removed"    -- a destroy the agent refused: it was already gone
+local REASON_UNKNOWN  = "unknown"    -- missing from ui.list after events were dropped
+
+-- Jagex's interaction configurations. The agent refuses them on every component it makes,
+-- always, so they raise that refusal here (kind "refused") without a call.
+local FORBIDDEN_TEXT = "ui: prop forbidden on agent components (no op, drag or target configuration)"
+local FORBIDDEN = { opConfig = true, dragConfig = true, swipeConfig = true, pinchConfig = true,
+                    cursorConfig = true, paramsConfig = true, targetConfig = true,
+                    FlagRestricted = true, flagRestricted = true }
+GameUi.FORBIDDEN_TEXT = FORBIDDEN_TEXT
 
 -- Jagex combined component ids are (interface << 16) | component.
 local COMBINED_SHIFT = 16
@@ -157,13 +200,43 @@ local function run_subs(comp, hook, ev)
   end
 end
 
+-- A component is gone (the game took it down, a release, a refused destroy): forget it and
+-- run its DESTROYED callbacks with `reason`. `ev` is the event that said so, or a made-up one.
+function Registry:gone(comp, reason, ev)
+  self:forget(comp.handle, reason)
+  ev = ev or { kind = "ui", name = "ui", pid = self.game._pid, handle = comp.handle,
+               hook = HOOK_DESTROYED, reason = reason, truncated = false, component = comp }
+  run_subs(comp, HOOK_DESTROYED, ev)
+end
+
+-- After an overflow some destroyed events may be lost: ask the agent which handles this
+-- connection still has, and treat every held handle it no longer lists as gone ("unknown").
+function Registry:reconcile(ev)
+  log("ui events were dropped (" .. tostring(ev.dropped) .. "); reconciling with ui.list")
+  local b = surface()
+  local rows, err = b.ui_list(self.game._host)
+  if not rows then
+    log("reconcile after overflow failed: " .. tostring(err))
+    return
+  end
+  local listed = {}
+  for _, row in ipairs(rows) do listed[row.handle] = true end
+  local missing = {}
+  for handle, comp in pairs(self.comps) do
+    if not listed[handle] then missing[#missing + 1] = comp end
+  end
+  for _, comp in ipairs(missing) do self:gone(comp, REASON_UNKNOWN) end
+end
+
 function Registry:dispatch(ev)
   ev.kind, ev.name, ev.pid = "ui", "ui", self.game._pid
   local comp = self.comps[ev.handle]
   ev.component = comp
   if ev.hook == HOOK_DESTROYED and comp then
-    self:forget(ev.handle, ev.reason)
-    run_subs(comp, HOOK_DESTROYED, ev)
+    self:gone(comp, ev.reason, ev)
+  elseif ev.hook == HOOK_OVERFLOW then
+    local ok, err = pcall(self.reconcile, self, ev)
+    if not ok then log("reconcile after overflow failed: " .. tostring(err)) end
   end
   local listeners = table.move(self.listeners, 1, #self.listeners, 1, {})
   for _, fn in ipairs(listeners) do
@@ -173,13 +246,20 @@ function Registry:dispatch(ev)
   return ev
 end
 
--- Read every queued ui event once (never waits) and dispatch them, in order. Nothing is read
+-- Read every queued ui event (never waits) and dispatch them, in order. One host call hands
+-- over at most POLL_BATCH events, so this calls again until one returns fewer. Nothing is read
 -- before the first ui call: the host subscribes on that call, so there can be no event.
 function Registry:poll()
   if not self.used or not self.game._host then return {} end
-  local events = surface().ui_poll_events(self.game._host)
-  for _, ev in ipairs(events) do self:dispatch(ev) end
-  return events
+  local all = {}
+  repeat
+    local events = surface().ui_poll_events(self.game._host)
+    for _, ev in ipairs(events) do
+      self:dispatch(ev)
+      all[#all + 1] = ev
+    end
+  until #events < POLL_BATCH or not self.game._host
+  return all
 end
 
 -- poll() for the framework's own loops: a failure is logged, never raised into the run.
@@ -188,21 +268,23 @@ function Registry:pump()
   if not ok then log("ui event poll failed: " .. tostring(err)) end
 end
 
--- Destroy every component this Game's ui made and still holds, newest first (children before
--- their parents), one ui.destroy each. A refusal (already gone in the game) is not an error
--- here: the handle is forgotten either way. Returns how many destroys were sent.
+-- Destroy everything this Game's ui holds with ONE ui.destroy_all. The Game is one agent
+-- connection of its own, so that releases exactly this Game's components and no one else's,
+-- and a stalled agent costs one call's timeout, not one per component. Every held component
+-- is then forgotten as "released" and its DESTROYED callbacks run, whatever the agent
+-- answered: closing the connection releases anything a failed call left. Returns the number
+-- of ui.destroy_all calls sent (0 or 1).
 function Registry:release()
   if not self.used or not self.game._host or self.game._exited then return 0 end
   self:pump()   -- learn about anything the game already took down
-  local sent = 0
-  for i = #self.created, 1, -1 do
-    local handle = self.created[i]
-    local ok, err = pcall(surface().ui_destroy, self.game._host, handle)
-    if not ok then log("release of " .. tostring(handle) .. " failed: " .. tostring(err)) end
-    sent = sent + 1
-    self:forget(handle, "released")
-  end
-  return sent
+  local ok, n, err = pcall(surface().ui_destroy_all, self.game._host)
+  if not ok then log("release failed: " .. tostring(n))
+  elseif n == nil then log("release refused or timed out: " .. tostring(err)) end
+  local held = {}   -- ours, newest first
+  for i = #self.created, 1, -1 do held[#held + 1] = self.comps[self.created[i]] end
+  for _, comp in ipairs(held) do self:gone(comp, REASON_RELEASED) end
+  self:detached()   -- the Jagex parents it looked up are released too
+  return 1
 end
 
 -- The Game detached: the host released this connection's components with it.
@@ -234,6 +316,9 @@ local function colour(v, verb)
 end
 
 local function handle_of(reg, v, what)
+  if v == nil then
+    raise("ui.create", "refused", what .. " is nil (GetComponent found nothing?)")
+  end
   if type(v) == "table" and v._reg then
     if v._reg ~= reg then error("botwithus.ui: " .. what .. " belongs to another game", 3) end
     return v.handle
@@ -251,9 +336,12 @@ local SET_COMMON = { rgba = "rgba", clickthrough = "clickthrough", hidden = "hid
                      enabled = "enabled" }
 -- Jagex property -> readback field. A function converts the field.
 local function flag(v) return v ~= nil and v >= 0 and v ~= 0 or false end
+-- The wire's `visible` is GLOBAL visibility (false when any parent is hidden): Jagex calls that
+-- visibleGlobal. Jagex's `visible` (this component's own) has no wire form yet, so it raises.
+-- isQuarantined is ours: the agent could not remove the component and keeps retrying.
 local GET_COMMON = { x = "x", y = "y", width = "width", height = "height", rgba = "rgba",
-                     visible = "visible", clickthrough = "clickthrough", restricted = "restricted",
-                     isQuarantined = "quarantined" }
+                     visibleGlobal = "visible", clickthrough = "clickthrough",
+                     isRestricted = "restricted", isQuarantined = "quarantined" }
 
 local function component_class(name, wire_type, extra)
   local class = { _name = name, _type = wire_type, _set = {}, _get = {}, _methods = {} }
@@ -266,10 +354,12 @@ local function component_class(name, wire_type, extra)
     local m = class._methods[key]
     if m ~= nil then return m end
     if type(key) ~= "string" or key:sub(1, 1) == "_" then return nil end   -- internal state
+    if FORBIDDEN[key] then raise("ui.get", "refused", FORBIDDEN_TEXT) end
     return Component._read(self, class, key)
   end
   class.__newindex = function(self, key, value)
     if type(key) ~= "string" or key:sub(1, 1) == "_" then rawset(self, key, value); return end
+    if FORBIDDEN[key] then raise("ui.set", "refused", FORBIDDEN_TEXT) end
     local prop = class._set[key]
     if not prop then
       if class._get[key] or Component._info_fields[key] then
@@ -351,11 +441,23 @@ function Component:MoveToBack()  self._reg:call("ui_order", "ui.order", self.han
 
 -- Destroy the component (and, in the game, its children). Returns whether its last reference
 -- is gone. A component already destroyed (by Destroy, or by the game) returns false and sends
--- nothing.
+-- nothing. If the agent refuses, the component is already gone in the game (its destroyed
+-- event not read yet): it is forgotten as "removed", its DESTROYED callbacks run, and Destroy
+-- returns false. Only "timeout" (the outcome is unknown) raises. A Jagex component raises
+-- the host's read-only refusal and is kept.
 function Component:Destroy()
   if self._dead then return false end
-  local freed = self._reg:call("ui_destroy", "ui.destroy", self.handle)
-  self._reg:forget(self.handle, "destroyed by the script")
+  if self._info.jagex then return self._reg:call("ui_destroy", "ui.destroy", self.handle) end
+  local reg = self._reg
+  local b = surface()
+  reg.used = true
+  local freed, err, kind = b.ui_destroy(reg:host(), self.handle)
+  if freed == nil then
+    if kind == "timeout" then raise("ui.destroy", kind, err) end
+    reg:gone(self, REASON_REMOVED)
+    return false
+  end
+  reg:forget(self.handle, "destroyed by the script")
   return freed
 end
 

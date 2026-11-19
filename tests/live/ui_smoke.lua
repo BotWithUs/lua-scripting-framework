@@ -12,10 +12,12 @@
 --   rectangle inside the layer, draws on the canvas, reads it all back and checks the agent's
 --   refusals reach the script verbatim. It writes the keys and handles, then "ready=1", and
 --   runs until the file BWU_SMOKE_OUT .. ".go" exists. bot.run then ends, and the framework
---   must destroy the four components itself (one ui.destroy each) before it detaches.
--- event: makes a layer, subscribes to its DESTROYED hook and writes "ready=1". The driver
---   takes the client to the lobby; the callback writes "event_reason=..." and the run ends
---   once the driver logs back in and "BWU_SMOKE_OUT .. '.go'" exists (or after 180 s).
+--   must release the four components itself (one ui.destroy_all) before it detaches.
+-- event: makes a layer, subscribes to its DESTROYED hook and writes "ready=1"; a second
+--   connection makes another layer whose events nobody reads. The driver takes the client to
+--   the lobby; the callback writes "event_reason=...", then Destroys the other layer (gone in
+--   the game, event unread) and writes what that returned. The run ends once the driver logs
+--   back in and "BWU_SMOKE_OUT .. '.go'" exists (or after 180 s).
 -- Raises (bwu_host exits non-zero) on any mismatch.
 
 -- `botwithus` comes from package.path: set LUA_PATH to this repo
@@ -94,7 +96,8 @@ local function draw_and_read(ui, area, layer, text, canvas, inner)
   check("triangle", canvas:AddTriangle(20, 20, 60, 20, 40, 60, 0x0000FFFF), 4)
   check("undo", canvas:Undo(), 3)
   check("text content", text.content, "botwithus.game_ui smoke")
-  check("text visible", text.visible, true)
+  check("text visibleGlobal", text.visibleGlobal, true)
+  check("text isRestricted", text.isRestricted, false)
   check("text rgba", text.rgba, 0xFFFF00FF)
   check("canvas x", canvas.x, 40)
   check("canvas width", canvas.width, 320)
@@ -111,6 +114,7 @@ local function draw_and_read(ui, area, layer, text, canvas, inner)
   refusal("later type", "ui type not supported yet: button", ui.Button.new, area)
   refusal("later prop", "ui prop not supported yet: hidden", function() layer.hidden = true end)
   refusal("category 0", "ui: bad_param category (1..234)", ui.Layer.new, area, 0)
+  refusal("Jagex opConfig", FORBIDDEN, function() layer.opConfig = 1 end)
 end
 
 local function run_cleanup()
@@ -127,11 +131,16 @@ local function run_cleanup()
     end,
     on_loop = function() return go_signal() and -1 or 1 end,
   }, { pid = pid })
-  -- bot.run has ended: the framework destroyed the four components, then detached.
+  -- bot.run has ended: the framework released the four components with one ui.destroy_all,
+  -- then detached.
 end
 
 local function run_event()
   local reason
+  -- A second connection the runner never reads events for: its layer's destroyed event stays
+  -- unread, so its Destroy after the logout meets the agent's refusal (already gone).
+  local other = bot.Game.attach(pid)
+  local stale
   bot.run({
     manifest = { name = "game_ui event smoke", version = "1", author = "botwithus" },
     on_start = function(ctx)
@@ -140,10 +149,20 @@ local function run_event()
       local layer = ui.Layer.new(area)
       layer:SetPos(40, 40)
       layer:SetSize(100, 40)
+      local oui = other:ui()
+      stale = oui.Layer.new(assert(oui.Interfaces:GetComponent(IFACE, COMP)))
+      local stale_reason
+      stale:Subscribe(oui.Hook.DESTROYED, function(_, why) stale_reason = why end)
       layer:Subscribe(ui.Hook.DESTROYED, function(comp, why)
         reason = why
         note("event_reason", why)
         note("event_destroyed", comp:IsDestroyed())
+        -- Destroy after the logout, its event not read: no raise, false, reason "removed".
+        local ok, freed = pcall(stale.Destroy, stale)
+        note("stale_destroy_ok", ok)
+        note("stale_destroy_result", tostring(freed))
+        note("stale_reason", tostring(stale_reason))
+        note("stale_handle", stale.handle)
       end)
       note("layer_handle", layer.handle)
       note("ready", 1)
@@ -155,6 +174,7 @@ local function run_event()
       return 1
     end,
   }, { pid = pid })
+  other:detach()
   check("event reason", reason, "parent_gone")
 end
 
