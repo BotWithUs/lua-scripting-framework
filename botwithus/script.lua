@@ -91,7 +91,6 @@ local function sleep_ticks(game, wait, n)
     if not wait() then return false end
     if game:_client_gone() then return false end
     local now = game:server_tick()
-    if now - start >= n then return true end
     -- Plugin-UI events (never waits): once per server tick, and at the same cadence while the
     -- tick stands still, as it does in the lobby, where the game takes components down.
     unpumped_ms = unpumped_ms + TICK_POLL_MS
@@ -99,6 +98,7 @@ local function sleep_ticks(game, wait, n)
       game:_pump_ui()
       unpumped_ms = 0
     end
+    if now - start >= n then return true end
     if now ~= last then
       last, stalled_ms, suspect = now, 0, false
     else

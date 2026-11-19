@@ -192,7 +192,7 @@ gives you `sleep_ticks`, not a millisecond timer, on purpose.
 
 | Module | What it gives you |
 |---|---|
-| `botwithus` | umbrella: `run`, `stopping`, `npcs`, `players`, `objects`, `Game`, `Tile`, `Actions`, `Events`, `Input`, `clients`, `Variables` |
+| `botwithus` | umbrella: `run`, `stopping`, `npcs`, `players`, `objects`, `Game`, `Tile`, `Actions`, `Events`, `Input`, `clients`, `Variables`, `ui(game)`, `GameUi` |
 | `botwithus.game` | `Game.attach()`, `:self()`, `:npcs()`, `:players()`, `:objects()` (visible scenery with `shape` / `rotation` / `resolved_id`), `:open_ifaces()` (each open interface's `type` / `client_opened` / `is_modal`, plus the table total) / `:is_interface_open()` / `:modal_ifaces()` / `:is_modal_open()`, `:clocks()`, `:walk_to()` (one hop), `:path()` (query), `:walk()` (full pathed walk that executes transitions), `:walk_cancel()`, `:queue_actions()` / `:try_queue_actions()` (one round trip, all or nothing), `:poll_events()`, `:schedule_break(seconds)` / `:interrupt_break()`, `:varc_int()` / `:varc_string()`, `:read_varp(s)` / `:read_varbit(s)` / `:varp_state()` / `:varp()` / `:varp_long()` / `:varbit()`, `:overhead_text(kind, index)` / `:headbars(kind, index)` / `:hint_arrows()` (each nil, code on refusal). Player and self rows carry `server_tile` beside the visual `tile` |
 | `botwithus.config` | settings fields: `int_field`, `string_field`, `bool_field`, `choice_field`, `item_id_field`, plus `validate_fields`, `validate_manifest`, `defaults` |
 | `botwithus.worker` | the GUI's entry points (`describe`, `run`); called by the host, not by scripts |
@@ -202,6 +202,7 @@ gives you `sleep_ticks`, not a millisecond timer, on purpose.
 | `botwithus.tile` | `Tile` with Chebyshev (8-directional) distance |
 | `botwithus.actions` | action ids + builders: `walk_to(x, y)`, `component_click(iface, comp [, option = 1 [, sub_slot = -1]])`, `dialogue_option(iface, comp)` |
 | `botwithus.events` | agent event decoding for `Game:poll_events()`: `action_refused` (`reason_name` `no_target` / `anchor_timeout` / `no_opener`, `anchor_name`, `held_ms`), `action_executed` and `key_input` (`key`, `is_alt` / `is_ctrl` / `is_shift`, `synthetic`, `text_input_focused`, `is_repeat`); other types pass through as raw `{ type, body }` |
+| `botwithus.game_ui` | the game's own UI components, shaped like Jagex's `ui.*` plugin API: `game:ui()` / `ctx.ui` -> `ui.Canvas.new(parent)`, `ui.Interfaces:GetComponent(iface, comp)`, `comp:SetPos(x, y)`, `canvas:AddLine(...)`, `comp:Destroy()`, `comp:Subscribe(ui.Hook.DESTROYED, fn)`. See [docs/UI.md](docs/UI.md) |
 | `botwithus.input` | the game's input dialog: `Input.dialog(game)` with `:mode()`, `:is_open()`, `:text()`, `:enter_amount(3 \| "10k")` / `:enter_text(name)` (type and submit), `:submit()`, `:cancel()`, `:backspace(n)`, `:clear()` (false when the dialog is closed or in the wrong mode; text it would reject raises before anything is sent). Low level: `KeyStroke` with `ENTER` / `BACKSPACE` / `ESCAPE`, `fire_keys`, `type_text`, `component_trigger` |
 
 ## Managing clients
@@ -220,6 +221,21 @@ Lua scripts have one thread, so events are read with `cm:poll()` / `cm:pump()` /
 `cm:wait_for()`, and handlers run only inside those calls. With no close handler, nothing is
 answered and the script keeps running. See [docs/CLIENTS.md](docs/CLIENTS.md) and
 `examples/manager.lua`.
+
+## Plugin UI: the game's own components
+
+`ctx.ui` (or `game:ui()`) creates native game components, the ones Jagex's Lua plugin API
+makes, in the shape of that API, so its snippets port almost verbatim:
+
+```lua
+local area = ctx.ui.Interfaces:GetComponent(1477, 61)   -- TOPLEVEL_V2__GAME_AREA
+local c = ctx.ui.Canvas.new(area)
+c:SetSize(300, 300)
+c:AddOutline(0, 0, 200, 200, 5, 0xFF0000FF)
+```
+
+Calls raise on failure, with the agent's own message. Everything a run made is destroyed when
+the run ends. See [docs/UI.md](docs/UI.md) for what is supported, the errors and the events.
 
 ## Queueing actions: all or nothing
 
@@ -358,4 +374,5 @@ languages.
 botwithus/   the library (pure Lua; no wire code)
 examples/    runnable sample scripts (woodcutter and banker are plugins, manager is self-running)
 spec/        unit suite + fake_bwu surface + a tiny runner
+tests/live/  live smoke scripts (need a client in the world; not part of the unit suite)
 ```

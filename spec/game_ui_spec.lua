@@ -467,6 +467,17 @@ T["ui: a sleep on a stalled tick (the lobby) still reads ui events, about once a
   assert_(polls >= expected - 1 and polls <= expected + 1, "about once per tick, not per wait: " .. polls)
 end
 
+T["ui: a one-tick sleep still reads ui events (the GUI worker's loop relies on it)"] = function(assert_)
+  local _, game, ui, f = setup()
+  local Script = require("botwithus.script")
+  local layer = ui.Layer.new(ui.Interfaces:GetComponent(IFACE, COMP))
+  local reason
+  layer:Subscribe(ui.Hook.DESTROYED, function(_, r) reason = r end)
+  f.game_destroy(layer.handle, "removed")
+  assert_(Script._sleep_ticks(game, function() return true end, 1), "the tick advanced")
+  assert_(reason == "removed", "pumped before returning: " .. tostring(reason))
+end
+
 T["ui: detach marks every component destroyed (the host released them)"] = function(assert_)
   local _, game, ui, f = setup()
   local c = ui.Layer.new(ui.Interfaces:GetComponent(IFACE, COMP))

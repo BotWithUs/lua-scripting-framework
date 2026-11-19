@@ -913,4 +913,23 @@ T["the worker's tick poll is within the stop latency"] = function(assert_)
   assert_(Script.TICK_POLL_MS <= STOP_WAIT_LIMIT_MS, "TICK_POLL_MS " .. Script.TICK_POLL_MS)
 end
 
+T["run: a GUI run destroys its plugin UI at the end, then the host releases at detach"] = function(assert_)
+  local made = {}
+  local p = plugin({
+    on_start = function(ctx)
+      local area = ctx.ui.Interfaces:GetComponent(1477, 61)
+      made[1] = ctx.ui.Layer.new(area)
+      made[2] = ctx.ui.Text.new(made[1])
+    end,
+  })
+  local b = run_plugin(p)
+  local f = b._ui
+  local destroys = f.calls_of("ui_destroy")
+  assert_(#destroys == 2 and destroys[1].args[2] == made[2].handle
+    and destroys[2].args[2] == made[1].handle, "one ui.destroy each, newest first")
+  assert_(#f.calls_of("ui_destroy_all") == 0, "the framework never sends ui.destroy_all")
+  assert_(#f.calls_of("host_release") == 1 and f.host_released == 0, "the host's release found nothing")
+  assert_(#crashes(b) == 0, "no crash")
+end
+
 return T

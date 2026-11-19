@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Plugin UI: `botwithus.game_ui`, shaped like Jagex's `ui.*` plugin API.** `game:ui()`,
+  `ctx.ui` or `bot.ui(game)` returns a namespace with `Canvas`, `Rectangle`, `Line`, `Text`
+  and `Layer` (`.new(parent, categoryID?, dynamicID?)`), `Interfaces:GetComponent`, the
+  `Set*` layout methods, properties, the canvas shapes plus `Batch`, `Destroy`,
+  `MoveToFront` / `MoveToBack` and `Subscribe(ui.Hook.DESTROYED, fn)`. Failures raise a ui
+  error carrying the agent's message verbatim. A run destroys what it made when it ends.
+  `ui` events (`destroyed`, `overflow`) reach `bot.run` once per server tick and a clients
+  manager's `on("ui")` / `poll()` / `pump()`. Needs a native host with `bwu.ui_*` and an
+  agent with the `ui.*` verbs. See [docs/UI.md](docs/UI.md).
 - **`Game:poll_events()` decodes `key_input` (type 30).** `Events.KEY_INPUT`, `Events.KEY_INPUT_SIZE`
   and a decoder returning `{ type, name = "key_input", key, is_alt, is_ctrl, is_shift, synthetic,
   text_input_focused, is_repeat }`. The three flags come from the body's last byte (NXTLibrary
