@@ -7,12 +7,11 @@
 --   if idle:has_expired() then idle:reset() end  -- reset re-rolls the duration
 --   print(T.Durations.format(run:elapsed_ms()))  -- "01:02:03", or "2d 01:02:03"
 --
--- THE CLOCK. Lua 5.4 has no millisecond wall clock, and the native host does not offer one, so
--- the default clock is os.time() in milliseconds: one-second resolution. That is fine for run
--- times and per-hour rates; for anything finer, pace in server ticks (ctx:sleep_ticks,
--- ctx:delay_ticks) instead. Every constructor takes a clock (a function returning milliseconds)
--- so a test, or a host that gains a finer clock, can pass its own. os.clock() is CPU time, not
--- wall time, and is never used here.
+-- THE CLOCK. The default clock is the native host's millisecond monotonic clock,
+-- bwu.monotonic_ms (host ABI 8): it never goes backwards and does not follow wall-clock changes.
+-- On an older host, or a surface without it, it falls back to os.time() in milliseconds, which has
+-- one-second resolution. Every constructor takes a clock (a function returning milliseconds) so a
+-- test can pass its own. os.clock() is CPU time, not wall time, and is never used here.
 
 local Timers = {}
 
@@ -22,8 +21,22 @@ local MINUTES_PER_HOUR = 60
 local HOURS_PER_DAY = 24
 local MS_PER_HOUR = MS_PER_SECOND * SECONDS_PER_MINUTE * MINUTES_PER_HOUR
 
--- The default clock: wall time in milliseconds, one-second resolution.
-function Timers.wall_ms() return os.time() * MS_PER_SECOND end
+-- The default clock, in milliseconds: bwu.monotonic_ms when the host has it (host ABI 8), else
+-- os.time() (one-second resolution). Resolved on each call, so a surface installed later counts.
+function Timers.now_ms()
+  local b = rawget(_G, "bwu")
+  if b ~= nil and b.monotonic_ms ~= nil then return b.monotonic_ms() end
+  return os.time() * MS_PER_SECOND
+end
+
+-- Kept for callers of the old name; the same clock as now_ms.
+Timers.wall_ms = function() return Timers.now_ms() end
+
+-- True when the default clock has millisecond resolution (the host's monotonic clock).
+function Timers.has_ms_clock()
+  local b = rawget(_G, "bwu")
+  return b ~= nil and b.monotonic_ms ~= nil
+end
 
 -- Stopwatch -------------------------------------------------------------------------------------
 
@@ -32,7 +45,7 @@ Stopwatch.__index = Stopwatch
 
 -- A stopped stopwatch at zero. `clock` (optional) returns milliseconds.
 function Stopwatch.new(clock)
-  return setmetatable({ _clock = clock or Timers.wall_ms, _accumulated = 0, _since = 0,
+  return setmetatable({ _clock = clock or Timers.now_ms, _accumulated = 0, _since = 0,
                         _running = false }, Stopwatch)
 end
 
@@ -87,7 +100,7 @@ function Timer.new(min_ms, max_ms, opts)
     error(("botwithus: a timer needs 0 <= min_ms <= max_ms, got %s..%s"):format(min_ms, max_ms), 2)
   end
   opts = opts or {}
-  local t = setmetatable({ _min = min_ms, _max = max_ms, _clock = opts.clock or Timers.wall_ms,
+  local t = setmetatable({ _min = min_ms, _max = max_ms, _clock = opts.clock or Timers.now_ms,
                            _random = opts.random or math.random }, Timer)
   return t:reset()
 end

@@ -154,7 +154,8 @@ function M.new(opts)
     local out = {}
     for i, o in ipairs(state.locs_) do
       out[i] = { id = o.id, resolved_id = o.resolved_id, tile = copy_tile(o.tile),
-                 shape = o.shape, rotation = o.rotation, flags = o.flags }
+                 shape = o.shape, rotation = o.rotation, flags = o.flags,
+                 animation_id = o.animation_id }   -- host ABI 8; nil in an older row
     end
     return out
   end
@@ -1490,6 +1491,81 @@ function M.var_record(id, state, value, opts)
   if verified == nil then verified = true end
   return { id = id, state = state, value = value, value64 = opts.value64 or value,
            kind = opts.kind or -1, default_verified = verified }
+end
+
+-- Host ABI 8 (native-scripting-host): the gameval name index, the millisecond clock, and the
+-- run control's pause switch and settings store, in the shapes the native Lua binding has.
+--   opts.gamevals  { [type] = { NAME = id } }; nil makes the index unavailable
+--   opts.version   index_version gameval_status reports (default 1794589493)
+--   opts.saved     the map ctl_settings returns (the last run's save), or nil
+--   opts.save_code what ctl_save_settings answers (default CTL_SAVE_OK)
+-- bwu._abi8 records { now = ms (settable), saves = { maps }, paused, seq, flips = { {flag, by} },
+-- gameval_calls }. rec.gui_pause(flag) is the GUI's set_paused.
+function M.install_abi8(bwu, opts)
+  opts = opts or {}
+  local rec = { now = 1000000, saves = {}, paused = false, seq = 0, flips = {}, gameval_calls = 0 }
+  bwu._abi8 = rec
+  local tables = nil
+  if opts.gamevals then
+    tables = {}
+    for t, names in pairs(opts.gamevals) do
+      tables[t] = {}
+      for n, id in pairs(names) do tables[t][n:upper()] = id end
+    end
+  end
+  function bwu.gameval_status()
+    if tables == nil then return false, "gameval: no local game cache" end
+    return true, opts.version or 1794589493
+  end
+  function bwu.gameval_id(t, name)
+    rec.gameval_calls = rec.gameval_calls + 1
+    local id = ((tables or {})[t] or {})[name:upper()]
+    if id == nil then return nil, "not_found" end
+    return id
+  end
+  function bwu.gameval_name(t, id)
+    for n, i in pairs((tables or {})[t] or {}) do
+      if i == id then return n end
+    end
+    return nil, "not_found"
+  end
+  function bwu.gameval_prefix(t, prefix, limit)
+    local rows = {}
+    for n, i in pairs((tables or {})[t] or {}) do
+      if n:sub(1, #prefix) == prefix:upper() then rows[#rows + 1] = { id = i, name = n } end
+    end
+    table.sort(rows, function(a, b) return a.name < b.name end)
+    local out = {}
+    for k = 1, math.min(limit or 100, #rows) do out[k] = rows[k] end
+    return out, #rows
+  end
+  function bwu.monotonic_ms() return rec.now end
+  bwu.CTL_SAVE_OK, bwu.CTL_SAVE_FAILED, bwu.CTL_SAVE_UNSUPPORTED = 1, 0, -1
+  local function flip(flag, by)
+    if rec.paused == flag then return end
+    rec.paused = flag
+    rec.seq = rec.seq + 1
+    rec.flips[#rec.flips + 1] = { flag, by }
+  end
+  function bwu.ctl_paused() return rec.paused, rec.seq end
+  function bwu.ctl_set_paused(flag)
+    if type(flag) ~= "boolean" then error("bad argument #1 to 'ctl_set_paused' (boolean expected)", 2) end
+    flip(flag, "script")
+    return true
+  end
+  function rec.gui_pause(flag) flip(flag, "control") end
+  function bwu.ctl_settings() return opts.saved end
+  function bwu.ctl_save_settings(map)
+    for k, v in pairs(map) do
+      if type(k) ~= "string" or type(v) ~= "string" then
+        error("bwu.ctl_save_settings: keys and values must be strings", 2)
+      end
+    end
+    rec.saves[#rec.saves + 1] = map
+    local code = opts.save_code or bwu.CTL_SAVE_OK
+    return code, code == bwu.CTL_SAVE_OK and "" or "disk full"
+  end
+  return bwu
 end
 
 return M

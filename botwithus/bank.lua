@@ -16,6 +16,7 @@
 -- wait for the inventory to change (ctx:delay_until) before relying on it.
 
 local Inventory = require("botwithus.inventory")
+local G = require("botwithus.gameval")
 local Match = require("botwithus.match")
 local Actions = require("botwithus.actions")
 local Input = require("botwithus.input")
@@ -43,6 +44,34 @@ local VARBIT_SIDE_TAB = 45191       -- BANK_SIDE_TAB_SELECTED
 local VARBIT_PRESET_PAGE = 49662    -- SHARE_PRESET_BANK_BUTTON_PAGE
 local VARP_WITHDRAW_AMOUNT = 111    -- BANK_MOVE_X
 local VARP_WITHDRAW_AS_NOTE = 160   -- BANKCERT
+
+-- By gameval name (host ABI 8); the number is the fallback when the name does not resolve.
+local INTERFACE_REF = G.ref("interface", "BANK", Bank.INTERFACE)
+local INPUT_REF = G.ref("interface", "MESLAYER", Bank.INPUT_INTERFACE)
+local VAR_REFS = {
+  [VARBIT_TRANSFER_MODE] = G.ref("varbit", "BANK_CUSTOMOP", VARBIT_TRANSFER_MODE),
+  [VARBIT_SIDE_VIEW] = G.ref("varbit", "BANK_CURRENT_INV", VARBIT_SIDE_VIEW),
+  [VARBIT_SIDE_TAB] = G.ref("varbit", "BANK_SIDE_TAB_SELECTED", VARBIT_SIDE_TAB),
+  [VARBIT_PRESET_PAGE] = G.ref("varbit", "SHARE_PRESET_BANK_BUTTON_PAGE", VARBIT_PRESET_PAGE),
+  [VARP_WITHDRAW_AMOUNT] = G.ref("varp", "BANK_MOVE_X", VARP_WITHDRAW_AMOUNT),
+  [VARP_WITHDRAW_AS_NOTE] = G.ref("varp", "BANKCERT", VARP_WITHDRAW_AS_NOTE),
+}
+local function var(id) return VAR_REFS[id]:id() end
+-- Every bank component clicked, by its fallback component number.
+local COMPONENT_NAMES = {
+  [ITEMS] = "BANK__BANK_INV", [BACKPACK_ITEMS] = "BANK__INVENTORY_CLICK",
+  [CLOSE_BUTTON] = "BANK__CLOSE_BUTTON_LAYER", [DEPOSIT_BACKPACK] = "BANK__BANK_INV_BUTTON",
+  [DEPOSIT_WORN] = "BANK__BANK_WORN_BUTTON", [DEPOSIT_FAMILIAR] = "BANK__BANK_BOB_BUTTON",
+  [DEPOSIT_POUCH] = "BANK__BANK_POUCH_BUTTON", [PRESET_BUTTONS] = "BANK__SHARE_QUICK_CLICK",
+  [NOTE_MODE_BUTTON] = "BANK__BANK_CERT_BUTTON", [93] = "BANK__DEFAULT_OP_1", [96] = "BANK__DEFAULT_OP_5",
+  [99] = "BANK__DEFAULT_OP_10", [103] = "BANK__DEFAULT_OP_ALL_BUTTON", [106] = "BANK__DEFAULT_OP_X",
+}
+-- The interface and component of the bank component whose fallback number is `comp`.
+local function component(comp)
+  local name = COMPONENT_NAMES[comp]
+  if name == nil then return Bank.INTERFACE, comp end
+  return G.component_ref(name, Bank.INTERFACE, comp):component()
+end
 
 local OP_CLICK = 1
 local OP_ENTER_AMOUNT = 6
@@ -72,31 +101,31 @@ Bank.TRANSFER, Bank.PRESETS = "transfer", "presets"
 
 function Bank.new(game) return setmetatable({ _game = game }, Bank) end
 
-function Bank:is_open() return self._game:is_interface_open(Bank.INTERFACE) end
-function Bank:is_input_open() return self._game:is_interface_open(Bank.INPUT_INTERFACE) end
+function Bank:is_open() return self._game:is_interface_open(INTERFACE_REF:id()) end
+function Bank:is_input_open() return self._game:is_interface_open(INPUT_REF:id()) end
 
 -- The bank's own inventory view (botwithus.inventory); not present while the bank is closed.
 function Bank:items() return self._game:bank() end
 
-function Bank:withdraw_amount() return self._game:varp(VARP_WITHDRAW_AMOUNT) end
-function Bank:preset_page() return self._game:varbit(VARBIT_PRESET_PAGE) end
+function Bank:withdraw_amount() return self._game:varp(var(VARP_WITHDRAW_AMOUNT)) end
+function Bank:preset_page() return self._game:varbit(var(VARBIT_PRESET_PAGE)) end
 
 function Bank:view()
-  local v = self._game:varbit(VARBIT_SIDE_VIEW)
+  local v = self._game:varbit(var(VARBIT_SIDE_VIEW))
   if v == SIDE_VIEW_BACKPACK then return Bank.BACKPACK end
   return v == SIDE_VIEW_EQUIPMENT and Bank.EQUIPMENT or Bank.FAMILIAR
 end
 
 function Bank:withdraw_mode()
-  return self._game:varp(VARP_WITHDRAW_AS_NOTE) == WITHDRAW_AS_NOTE and Bank.NOTE or Bank.ITEM
+  return self._game:varp(var(VARP_WITHDRAW_AS_NOTE)) == WITHDRAW_AS_NOTE and Bank.NOTE or Bank.ITEM
 end
 
 function Bank:setting()
-  return self._game:varbit(VARBIT_SIDE_TAB) == SIDE_TAB_PRESETS and Bank.PRESETS or Bank.TRANSFER
+  return self._game:varbit(var(VARBIT_SIDE_TAB)) == SIDE_TAB_PRESETS and Bank.PRESETS or Bank.TRANSFER
 end
 
 function Bank:transfer_mode()
-  local v = self._game:varbit(VARBIT_TRANSFER_MODE)
+  local v = self._game:varbit(var(VARBIT_TRANSFER_MODE))
   for _, a in ipairs(AMOUNTS) do
     if a.varbit == v then return a end
   end
@@ -106,7 +135,8 @@ end
 -- Clicks ------------------------------------------------------------------------------------
 
 function Bank:_button(comp, sub)
-  self._game:do_action(Actions.component_click(Bank.INTERFACE, comp, OP_CLICK, sub or -1))
+  local iface, resolved = component(comp)
+  self._game:do_action(Actions.component_click(iface, resolved, OP_CLICK, sub or -1))
   return true
 end
 
@@ -117,7 +147,8 @@ end
 
 function Bank:_slot(grid, row, op)
   if row == nil then return false end
-  self._game:do_action(Actions.component_click(Bank.INTERFACE, grid, op, row.slot))
+  local iface, resolved = component(grid)
+  self._game:do_action(Actions.component_click(iface, resolved, op, row.slot))
   return true
 end
 

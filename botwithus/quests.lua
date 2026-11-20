@@ -18,14 +18,19 @@
 -- STUBS. The cache holds unlisted stub records next to the real quests (6 and 132 are stubs of
 -- Cook's Assistant 257 and Vampyre Slayer 258: same name, empty listName, no progress variable).
 -- Asked about a stub, the log reads the listed quest of the same name instead. The name index
--- this needs is built once per log by reading every quest id up to Quests.MAX_QUEST_ID, and only
--- when a stub is asked about (or a quest is asked for by name).
+-- this needs is built once per log, only when a stub is asked about (or a quest by name), from the
+-- quest ids the gameval index names (host ABI 8), as the Java host does; without a gameval index
+-- it reads every quest id up to Quests.MAX_QUEST_ID instead, and says so once.
+--
+-- BY NAME. status("COOKS_ASSISTANT") takes a quest gameval name (the Java host's status(String));
+-- a string that is not one is matched against the listed quests' display names.
 --
 -- Requirements: { kind = "skill", skill_id, required, actual }, { kind = "quest", quest_id },
 -- { kind = "membership" }. Varp / varbit requirements and quest points are not checked: the cache
 -- decoder skips the former, and the varp v1 read for quest points is PAGEPOS.
 
 local Definitions = require("botwithus.definitions")
+local G = require("botwithus.gameval")
 
 local Quests = {}
 Quests.__index = Quests
@@ -35,8 +40,10 @@ Quests.STARTED = "started"
 Quests.COMPLETE = "complete"
 Quests.UNKNOWN = "unknown"
 Quests.UNKNOWN_PROGRESS = -1
--- The highest quest id the name index looks at.
+-- The highest quest id the fallback scan looks at.
 Quests.MAX_QUEST_ID = 1024
+-- How many quest gamevals the index lists at most (the Java host's MAX_QUESTS).
+Quests.MAX_QUESTS = 4096
 
 function Quests.new(game) return setmetatable({ _game = game, _types = {}, _listed = nil }, Quests) end
 
@@ -53,11 +60,26 @@ end
 
 local function is_listed(q) return type(q.listName) == "string" and q.listName ~= "" end
 
--- name -> the first listed quest id with that name.
+local warned_scan = false
+
+-- name -> the first listed quest id with that name: the gameval index's quest ids in name order,
+-- else (no index) every id up to MAX_QUEST_ID.
 function Quests:_listed_by_name()
   if self._listed then return self._listed end
   local index = {}
-  for id = 0, Quests.MAX_QUEST_ID do
+  local rows = G.starting_with("quest", "", Quests.MAX_QUESTS)
+  local ids = {}
+  for i, row in ipairs(rows) do ids[i] = row.id end
+  if #ids == 0 then
+    if not warned_scan then
+      warned_scan = true
+      local _, why = G.available()
+      io.stderr:write(("[botwithus.quests] no quest ids from the gameval index (%s); scanning ids\n")
+        :format(tostring(why or "no quest names")))
+    end
+    for id = 0, Quests.MAX_QUEST_ID do ids[#ids + 1] = id end
+  end
+  for _, id in ipairs(ids) do
     local q = self:_type(id)
     if q and is_listed(q) and index[q.name] == nil then index[q.name] = id end
   end
@@ -104,6 +126,8 @@ end
 function Quests:_id_of(which)
   if math.type(which) == "integer" then return which end
   if type(which) ~= "string" then return nil end
+  local by_gameval = G.id("quest", which)
+  if by_gameval ~= nil then return by_gameval end
   local want = which:lower()
   for name, id in pairs(self:_listed_by_name()) do
     if name:lower() == want then return id end

@@ -25,6 +25,7 @@
 local Definitions = require("botwithus.definitions")
 local Actions = require("botwithus.actions")
 local Skills = require("botwithus.skills")
+local G = require("botwithus.gameval")
 
 local Prayers = {}
 Prayers.__index = Prayers
@@ -34,16 +35,16 @@ local TENTHS = 10
 local POINTS_PER_LEVEL = 10
 local OP_TOGGLE = 1
 local OP_SELECT_QUICK_PRAYERS = 2
-local POINTS = 16736             -- varbit PRAYER_POINTS
-local MODE = 16789               -- varbit PRAYER_MODE
-local QUICK_PRAYERS_ON = 5941    -- varbit TOPSTAT_PRAYER_BUTTON
-Prayers.WINDOW = 1458            -- TOPLEVEL_V2_PRAYER
-local BUTTONS_COMP = 40          -- TOPLEVEL_V2_PRAYER__PRAYER_BUTTONS
-local COMBAT_BAR = 1430
-local QUICK_PRAYER_ORB = 18      -- TOPLEVEL_V2_COMBAT_BAR__PRAYER_GLOBE_LAYER
-local RIBBON = 1431              -- TOPLEVEL_V2_RIBBON__WINDOW_BUILD (comp 0)
-local RIBBON_COMP = 0
-local RIBBON_WINDOWS = 13319     -- enum RIBBON_WINDOWS: ribbon slot -> window number
+-- Each by its gameval name (host ABI 8); the number is the fallback when the name does not resolve.
+local POINTS = G.ref("varbit", "PRAYER_POINTS", 16736)
+local MODE = G.ref("varbit", "PRAYER_MODE", 16789)
+local QUICK_PRAYERS_ON = G.ref("varbit", "TOPSTAT_PRAYER_BUTTON", 5941)
+Prayers.WINDOW = 1458            -- TOPLEVEL_V2_PRAYER (the fallback; see WINDOW_REF)
+local WINDOW_REF = G.ref("interface", "TOPLEVEL_V2_PRAYER", Prayers.WINDOW)
+local BUTTONS = G.component_ref("TOPLEVEL_V2_PRAYER__PRAYER_BUTTONS", 1458, 40)
+local QUICK_PRAYER_ORB = G.component_ref("TOPLEVEL_V2_COMBAT_BAR__PRAYER_GLOBE_LAYER", 1430, 18)
+local RIBBON = G.component_ref("TOPLEVEL_V2_RIBBON__WINDOW_BUILD", 1431, 0)
+local RIBBON_WINDOWS = G.ref("enum", "RIBBON_WINDOWS", 13319)  -- ribbon slot -> window number
 local PRAYER_WINDOW_NUMBER = 4
 local PRAYER_RIBBON_SLOT = 11    -- the 951 slot, used when the enum cannot be read
 
@@ -142,10 +143,90 @@ local ROWS = {
   { "CURSE_RUINATION", "curses", 48376, 53280 },
 }
 
+-- { struct gameval, active varbit gameval } per key, as the Java host's Prayer names them.
+local NAMES = {
+  TIERED_DEFENCE = { "COMBATV2_PRAYER_TIERED_DEFENCE", "COMBATV2_PRAYER_BOOST_DEFENCE" },
+  TIERED_MELEE_STRENGTH = { "COMBATV2_PRAYER_TIERED_MELEE_STRENGTH", "COMBATV2_PRAYER_BOOST_MELEE_STRENGTH" },
+  TIERED_MELEE_ATTACK = { "COMBATV2_PRAYER_TIERED_MELEE_ATTACK", "COMBATV2_PRAYER_BOOST_MELEE_ATTACK" },
+  RAPID_RESTORE = { "COMBATV2_PRAYER_RAPID_RESTORE", "COMBATV2_PRAYER_RAPID_RESTORE" },
+  RAPID_HEAL = { "COMBATV2_PRAYER_RAPID_HEAL", "COMBATV2_PRAYER_HEAL" },
+  PROTECT_ITEM = { "COMBATV2_PRAYER_PROTECT_ITEM", "COMBATV2_PRAYER_PROTECT_ITEM" },
+  PROTECT_MAGIC = { "COMBATV2_PRAYER_PROTECT_MAGIC", "COMBATV2_PRAYER_PROTECT_MAGE" },
+  PROTECT_MISSILES = { "COMBATV2_PRAYER_PROTECT_MISSILES", "COMBATV2_PRAYER_PROTECT_RANGE" },
+  PROTECT_MELEE = { "COMBATV2_PRAYER_PROTECT_MELEE", "COMBATV2_PRAYER_PROTECT_MELEE" },
+  PROTECT_NECROMANCY = { "COMBATV2_PRAYER_PROTECT_NECROMANCY", "COMBATV2_PRAYER_PROTECT_NECROMANCY" },
+  RETRIBUTION = { "COMBATV2_PRAYER_RETRIBUTION", "COMBATV2_PRAYER_RETRIBUTION" },
+  REDEMPTION = { "COMBATV2_PRAYER_REDEMPTION", "COMBATV2_PRAYER_REDEMPTION" },
+  SMITE = { "COMBATV2_PRAYER_SMITE", "COMBATV2_PRAYER_SMITE" },
+  TIERED_RANGE_ATTACK = { "COMBATV2_PRAYER_TIERED_RANGE_ATTACK", "COMBATV2_PRAYER_BOOST_RANGED_ATTACK" },
+  TIERED_RANGE_STRENGTH = { "COMBATV2_PRAYER_TIERED_RANGE_STRENGTH", "COMBATV2_PRAYER_BOOST_RANGED_STRENGTH" },
+  TIERED_MAGIC_ATTACK = { "COMBATV2_PRAYER_TIERED_MAGIC_ATTACK", "COMBATV2_PRAYER_BOOST_MAGIC_ATTACK" },
+  TIERED_MAGIC_STRENGTH = { "COMBATV2_PRAYER_TIERED_MAGIC_STRENGTH", "COMBATV2_PRAYER_BOOST_MAGIC_STRENGTH" },
+  TIERED_NECROMANCY_ATTACK = { "COMBATV2_PRAYER_TIERED_NECROMANCY_ATTACK", "COMBATV2_PRAYER_BOOST_NECROMANCY_ATTACK" },
+  TIERED_NECROMANCY_STRENGTH = { "COMBATV2_PRAYER_TIERED_NECROMANCY_STRENGTH", "COMBATV2_PRAYER_BOOST_NECROMANCY_STRENGTH" },
+  SUMMONING = { "COMBATV2_PRAYER_SUMMONING", "COMBATV2_PRAYER_PROTECT_SUMMONING" },
+  CHIVALRY = { "COMBATV2_PRAYER_CHIVALRY", "COMBATV2_PRAYER_CHIVALRY" },
+  PIETY = { "COMBATV2_PRAYER_PIETY", "COMBATV2_PRAYER_PIETY" },
+  RAPID_RENEWAL = { "COMBATV2_PRAYER_RAPID_RENEWAL", "COMBATV2_PRAYER_RAPID_RENEWAL" },
+  AUGURY = { "COMBATV2_PRAYER_AUGURY", "COMBATV2_PRAYER_AUGURY" },
+  RIGOUR = { "COMBATV2_PRAYER_RIGOUR", "COMBATV2_PRAYER_RIGOUR" },
+  SANCTITY = { "COMBATV2_PRAYER_SANCTITY", "COMBATV2_PRAYER_SANCTITY" },
+  DIVINE_RAGE = { "COMBATV2_PRAYER_DIVINE_RAGE", "COMBATV2_PRAYER_DIVINE_RAGE" },
+  ECLIPSED_SOUL = { "COMBATV2_PRAYER_ECLIPSED_SOUL", "COMBATV2_PRAYER_ECLIPSED_SOUL" },
+  CURSE_PROTECT_ITEM = { "COMBATV2_CURSE_PROTECT_ITEM", "CURSE_PROTECT_ITEM" },
+  CURSE_SAP_WARRIOR = { "COMBATV2_CURSE_SAP_WARRIOR", "CURSE_SAP_WARRIOR" },
+  CURSE_SAP_STRENGTH = { "COMBATV2_CURSE_SAP_STRENGTH", "CURSE_SAP_MELEE_STR" },
+  CURSE_SAP_RANGER = { "COMBATV2_CURSE_SAP_RANGER", "CURSE_SAP_RANGER" },
+  CURSE_SAP_RANGE_STRENGTH = { "COMBATV2_CURSE_SAP_RANGE_STRENGTH", "CURSE_SAP_RANGE_STR" },
+  CURSE_SAP_MAGE = { "COMBATV2_CURSE_SAP_MAGE", "CURSE_SAP_MAGE" },
+  CURSE_SAP_MAGIC_STRENGTH = { "COMBATV2_CURSE_SAP_MAGIC_STRENGTH", "CURSE_SAP_MAGIC_STR" },
+  CURSE_SAP_NECROMANCY_ATTACK = { "COMBATV2_CURSE_SAP_NECROMANCY_ATTACK", "CURSE_SAP_NECROMANCY_ATTACK" },
+  CURSE_SAP_NECROMANCY_STRENGTH = { "COMBATV2_CURSE_SAP_NECROMANCY_STRENGTH", "CURSE_SAP_NECROMANCY_STRENGTH" },
+  CURSE_SAP_DEFENCE = { "COMBATV2_CURSE_SAP_DEFENCE", "CURSE_SAP_DEFENCE" },
+  CURSE_SAP_SPIRIT = { "COMBATV2_CURSE_SAP_SPIRIT", "CURSE_SAP_SPIRIT" },
+  CURSE_BERSERKER = { "COMBATV2_CURSE_BERSERKER", "CURSE_BERSERKER" },
+  CURSE_DEFLECT_SUMMONING = { "COMBATV2_CURSE_DEFLECT_SUMMONING", "CURSE_DEFLECT_SUMMONING" },
+  CURSE_DEFLECT_MAGIC = { "COMBATV2_CURSE_DEFLECT_MAGIC", "CURSE_DEFLECT_MAGIC" },
+  CURSE_DEFLECT_MISSILES = { "COMBATV2_CURSE_DEFLECT_MISSILES", "CURSE_DEFLECT_RANGED" },
+  CURSE_DEFLECT_MELEE = { "COMBATV2_CURSE_DEFLECT_MELEE", "CURSE_DEFLECT_MELEE" },
+  CURSE_DEFLECT_NECROMANCY = { "COMBATV2_CURSE_DEFLECT_NECROMANCY", "CURSE_DEFLECT_NECROMANCY" },
+  CURSE_LEECH_ATTACK = { "COMBATV2_CURSE_LEECH_ATTACK", "CURSE_LEECH_ATTACK" },
+  CURSE_LEECH_RANGED = { "COMBATV2_CURSE_LEECH_RANGED", "CURSE_LEECH_RANGED" },
+  CURSE_LEECH_RANGE_STRENGTH = { "COMBATV2_CURSE_LEECH_RANGE_STRENGTH", "CURSE_LEECH_RANGED_STRENGTH" },
+  CURSE_LEECH_MAGIC = { "COMBATV2_CURSE_LEECH_MAGIC", "CURSE_LEECH_MAGIC" },
+  CURSE_LEECH_MAGIC_STRENGTH = { "COMBATV2_CURSE_LEECH_MAGIC_STRENGTH", "CURSE_LEECH_MAGIC_STRENGTH" },
+  CURSE_LEECH_NECROMANCY_ATTACK = { "COMBATV2_CURSE_LEECH_NECROMANCY_ATTACK", "CURSE_LEECH_NECROMANCY_ATTACK" },
+  CURSE_LEECH_NECROMANCY_STRENGTH = { "COMBATV2_CURSE_LEECH_NECROMANCY_STRENGTH", "CURSE_LEECH_NECROMANCY_STRENGTH" },
+  CURSE_LEECH_DEFENCE = { "COMBATV2_CURSE_LEECH_DEFENCE", "CURSE_LEECH_DEFENCE" },
+  CURSE_LEECH_STRENGTH = { "COMBATV2_CURSE_LEECH_STRENGTH", "CURSE_LEECH_STRENGTH" },
+  CURSE_LEECH_ENERGY = { "COMBATV2_CURSE_LEECH_ENERGY", "CURSE_LEECH_ENERGY" },
+  CURSE_LEECH_SPECIAL_ATTACK = { "COMBATV2_CURSE_LEECH_SPECIAL_ATTACK", "CURSE_LEECH_SPECIAL_ATTACK" },
+  CURSE_WRATH = { "COMBATV2_CURSE_WRATH", "CURSE_WRATH" },
+  CURSE_SOULSPLIT = { "COMBATV2_CURSE_SOULSPLIT", "CURSE_SOULSPLIT" },
+  CURSE_TURMOIL = { "COMBATV2_CURSE_TURMOIL", "CURSE_TURMOIL" },
+  CURSE_TORMENT = { "COMBATV2_CURSE_TORMENT", "CURSE_TORMENT" },
+  CURSE_ANGUISH = { "COMBATV2_CURSE_ANGUISH", "CURSE_ANGUISH" },
+  CURSE_SORROW = { "COMBATV2_CURSE_SORROW", "CURSE_SORROW" },
+  CURSE_FORTITUDE = { "COMBATV2_CURSE_FORTITUDE", "CURSE_FORTITUDE" },
+  CURSE_LIGHTFORM = { "COMBATV2_CURSE_LIGHTFORM", "CURSE_LIGHTFORM" },
+  CURSE_DARKFORM = { "COMBATV2_CURSE_DARKFORM", "CURSE_DARKFORM" },
+  CURSE_SOULLINK = { "COMBATV2_CURSE_SOULLINK", "CURSE_SOULLINK" },
+  CURSE_TEAMWORK_PROTECTION = { "COMBATV2_CURSE_TEAMWORK_PROTECTION", "CURSE_TEAMWORK_PROTECTION" },
+  CURSE_CHRONICLE_ATTRACTION = { "COMBATV2_CURSE_CHRONICLE_ATTRACTION", "CURSE_CHRONICLE_ATTRACTION" },
+  CURSE_SUPERHEAT_FORM = { "COMBATV2_CURSE_SUPERHEAT_FORM", "CURSE_SUPERHEAT_FORM" },
+  CURSE_OVERHEAD_TURMOIL = { "COMBATV2_CURSE_OVERHEAD_TURMOIL", "CURSE_OVERHEAD_TURMOIL" },
+  CURSE_OVERHEAD_ANGUISH = { "COMBATV2_CURSE_OVERHEAD_ANGUISH", "CURSE_OVERHEAD_ANGUISH" },
+  CURSE_OVERHEAD_TORMENT = { "COMBATV2_CURSE_OVERHEAD_TORMENT", "CURSE_OVERHEAD_TORMENT" },
+  CURSE_RUINATION = { "COMBATV2_CURSE_RUINATION", "CURSE_RUINATION" },
+}
+
 Prayers.ALL = {}
 Prayers.ORDER = {}
 for i, r in ipairs(ROWS) do
-  local row = { key = r[1], book = r[2], struct = r[3], varbit = r[4] }
+  -- struct / varbit are the fallback ids; struct_ref / varbit_ref resolve the names.
+  local row = { key = r[1], book = r[2], struct = r[3], varbit = r[4],
+                struct_ref = G.ref("struct", NAMES[r[1]][1], r[3]),
+                varbit_ref = G.ref("varbit", NAMES[r[1]][2], r[4]) }
   Prayers.ALL[r[1]] = row
   Prayers.ORDER[i] = row
 end
@@ -169,7 +250,7 @@ function Prayers.of_book(book)
   return out
 end
 
-function Prayers:raw_points() return self._game:varbit(POINTS) end
+function Prayers:raw_points() return self._game:varbit(POINTS:id()) end
 
 function Prayers:points()
   local raw = self:raw_points()
@@ -188,15 +269,15 @@ function Prayers:max_points()
   return level and level * POINTS_PER_LEVEL or -1
 end
 
-function Prayers:active_book() return BOOK_BY_MODE[self._game:varbit(MODE)] or Prayers.UNKNOWN end
+function Prayers:active_book() return BOOK_BY_MODE[self._game:varbit(MODE:id())] or Prayers.UNKNOWN end
 
-function Prayers:is_active(p) return self._game:varbit(Prayers.prayer(p).varbit) == ON end
+function Prayers:is_active(p) return self._game:varbit(Prayers.prayer(p).varbit_ref:id()) == ON end
 
 -- The prayers among `list` that are on, in one varbit read.
 function Prayers:_active(list)
   if #list == 0 then return {} end
   local ids = {}
-  for i, p in ipairs(list) do ids[i] = p.varbit end
+  for i, p in ipairs(list) do ids[i] = p.varbit_ref:id() end
   local on = {}
   for i, r in ipairs(self._game:read_varbits(ids)) do
     if r.value == ON then on[#on + 1] = list[i] end
@@ -248,9 +329,10 @@ local UNKNOWN_VALUE = -1
 -- quick_prayer_id, graphic_on, graphic_off }, or nil when the cache cannot read it.
 function Prayers:info(p)
   local row = Prayers.prayer(p)
-  local params = struct_params(row.struct)
+  local base = row.struct_ref:id()
+  local params = struct_params(base)
   if params == nil then return nil end
-  local struct_id = row.struct
+  local struct_id = base
   local tier, tier_id = self:_tier_for(params)
   if tier then params, struct_id = tier, tier_id end
   local function int(id) return params[id] or UNKNOWN_VALUE end
@@ -261,11 +343,11 @@ function Prayers:info(p)
            graphic_on = int(Prayers.PARAM_GRAPHIC_ON), graphic_off = int(Prayers.PARAM_GRAPHIC_OFF) }
 end
 
-function Prayers:is_window_open() return self._game:is_interface_open(Prayers.WINDOW) end
+function Prayers:is_window_open() return self._game:is_interface_open(WINDOW_REF:id()) end
 
 -- The ribbon slot holding the prayer window (enum RIBBON_WINDOWS), else the 951 slot.
 function Prayers:_ribbon_slot()
-  local ok, e = pcall(Definitions.enum, RIBBON_WINDOWS)
+  local ok, e = pcall(Definitions.enum, RIBBON_WINDOWS:id())
   if ok and e then
     for slot, window in pairs(e.entries) do
       if window == PRAYER_WINDOW_NUMBER then return slot end
@@ -277,14 +359,15 @@ end
 -- Opens the prayer window through its ribbon button; true when already open.
 function Prayers:open_window()
   if self:is_window_open() then return true end
-  self._game:do_action(Actions.component_click(RIBBON, RIBBON_COMP, OP_TOGGLE, self:_ribbon_slot()))
+  local ribbon, comp = RIBBON:component()
+  self._game:do_action(Actions.component_click(ribbon, comp, OP_TOGGLE, self:_ribbon_slot()))
   return true
 end
 
 -- The prayer's button in the open window, or nil.
 function Prayers:_button(info)
   if not self:is_window_open() then return nil end
-  local tree = self._game:interface_tree(Prayers.WINDOW, BUTTONS_COMP)
+  local tree = self._game:interface_tree(BUTTONS:component())
   for _, node in ipairs(tree and tree.nodes or {}) do
     local sprite = node.sprite_id
     if (sprite == info.graphic_on or sprite == info.graphic_off) and #(node.triggers or {}) > 0 then
@@ -305,16 +388,18 @@ function Prayers:toggle(p)
   return true
 end
 
-function Prayers:is_quick_prayers_active() return self._game:varbit(QUICK_PRAYERS_ON) == ON end
+function Prayers:is_quick_prayers_active() return self._game:varbit(QUICK_PRAYERS_ON:id()) == ON end
 
 -- The quick-prayer orb's own ops: 1 toggles, 2 opens the selection.
 function Prayers:toggle_quick_prayers()
-  self._game:do_action(Actions.component_click(COMBAT_BAR, QUICK_PRAYER_ORB, OP_TOGGLE, -1))
+  local bar, orb = QUICK_PRAYER_ORB:component()
+  self._game:do_action(Actions.component_click(bar, orb, OP_TOGGLE, -1))
   return true
 end
 
 function Prayers:open_quick_prayer_selection()
-  self._game:do_action(Actions.component_click(COMBAT_BAR, QUICK_PRAYER_ORB, OP_SELECT_QUICK_PRAYERS, -1))
+  local bar, orb = QUICK_PRAYER_ORB:component()
+  self._game:do_action(Actions.component_click(bar, orb, OP_SELECT_QUICK_PRAYERS, -1))
   return true
 end
 

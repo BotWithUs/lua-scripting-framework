@@ -12,6 +12,7 @@
 -- distinct item. A `target` is as for botwithus.bank (an exact name, ids, or a matcher).
 
 local Match = require("botwithus.match")
+local G = require("botwithus.gameval")
 local Actions = require("botwithus.actions")
 local CQ = require("botwithus.component_query")
 local Interact = require("botwithus.interact")
@@ -22,6 +23,9 @@ DepositBox.__index = DepositBox
 
 DepositBox.INTERFACE = 11            -- BANK_DEPOSIT_BOX
 local BACKPACK_GRID = 19             -- BANK_DEPOSIT_BOX__ICONS
+-- By gameval name (host ABI 8); the number is the fallback when the name does not resolve.
+local INTERFACE_REF = G.ref("interface", "BANK_DEPOSIT_BOX", DepositBox.INTERFACE)
+local GRID_REF = G.component_ref("BANK_DEPOSIT_BOX__ICONS", DepositBox.INTERFACE, BACKPACK_GRID)
 DepositBox.OPEN = "Deposit"
 DepositBox.DEPOSIT_CARRIED = "Deposit Carried Items"
 DepositBox.DEPOSIT_WORN = "Deposit Worn Items"
@@ -32,7 +36,7 @@ DepositBox.DEPOSIT_ALL = "Deposit-All"
 
 function DepositBox.new(game) return setmetatable({ _game = game }, DepositBox) end
 
-function DepositBox:is_open() return self._game:is_interface_open(DepositBox.INTERFACE) end
+function DepositBox:is_open() return self._game:is_interface_open(INTERFACE_REF:id()) end
 
 -- "Deposit" on the nearest object offering it.
 function DepositBox:open()
@@ -43,7 +47,7 @@ end
 
 function DepositBox:_press(option)
   if not self:is_open() then return false end
-  local button = CQ.new(self._game, DepositBox.INTERFACE):with_option(option):first()
+  local button = CQ.new(self._game, INTERFACE_REF:id()):with_option(option):first()
   return button ~= nil and CQ.interact(self._game, button, option)
 end
 
@@ -54,10 +58,11 @@ function DepositBox:deposit_familiar() return self:_press(DepositBox.DEPOSIT_FAM
 function DepositBox:deposit_money_pouch() return self:_press(DepositBox.DEPOSIT_POUCH) end
 
 function DepositBox:_deposit_slot(row)
-  local reply = self._game:component_ops(DepositBox.INTERFACE, BACKPACK_GRID, row.slot)
+  local iface, grid = GRID_REF:component()
+  local reply = self._game:component_ops(iface, grid, row.slot)
   local op = type(reply) == "table" and CQ.op_named({ ops = reply.ops or {} }, DepositBox.DEPOSIT_ALL)
   if not op then return false end
-  self._game:do_action(Actions.component_click(DepositBox.INTERFACE, BACKPACK_GRID, op, row.slot))
+  self._game:do_action(Actions.component_click(iface, grid, op, row.slot))
   return true
 end
 

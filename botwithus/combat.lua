@@ -17,6 +17,7 @@
 -- verified.
 
 local Prayers = require("botwithus.prayers")
+local G = require("botwithus.gameval")
 local Events = require("botwithus.events")
 
 local Combat = {}
@@ -31,17 +32,18 @@ Combat.RECENT_HIT_MS = 6000
 
 local IN_COMBAT = 1
 local TENTHS = 10
-local ADRENALINE = 679          -- varp SA_ENERGY
-local IN_COMBAT_FLAG = 1899     -- varbit COMBATV2_PLAYER_IS_IN_COMBAT
-local SUMMONING_POINTS = 41524  -- varbit LORE_POINTS (tenths)
-local LIFE_POINTS = 13537       -- varp LIFEPOINTS
-local MAX_LIFE_POINTS = 13538   -- varp MAXLIFEPOINTS
+-- By gameval name (host ABI 8); the number is the fallback when the name does not resolve.
+local ADRENALINE = G.ref("varp", "SA_ENERGY", 679)
+local IN_COMBAT_FLAG = G.ref("varbit", "COMBATV2_PLAYER_IS_IN_COMBAT", 1899)
+local SUMMONING_POINTS = G.ref("varbit", "LORE_POINTS", 41524)  -- tenths
+local LIFE_POINTS = G.ref("varp", "LIFEPOINTS", 13537)
+local MAX_LIFE_POINTS = G.ref("varp", "MAXLIFEPOINTS", 13538)
 
 function Combat.new(game)
   return setmetatable({ _game = game, _prayers = Prayers.new(game) }, Combat)
 end
 
-function Combat:adrenaline() return self._game:varp(ADRENALINE) end
+function Combat:adrenaline() return self._game:varp(ADRENALINE:id()) end
 
 -- The self row's health when it carries one, else the LIFEPOINTS varps.
 function Combat:_health()
@@ -54,18 +56,18 @@ end
 
 function Combat:life_points()
   local current = self:_health()
-  return current or self._game:varp(LIFE_POINTS)
+  return current or self._game:varp(LIFE_POINTS:id())
 end
 
 function Combat:max_life_points()
   local _, max = self:_health()
-  return max or self._game:varp(MAX_LIFE_POINTS)
+  return max or self._game:varp(MAX_LIFE_POINTS:id())
 end
 
 function Combat:prayer_points() return self._prayers:points() end
 
 function Combat:summoning_points()
-  local raw = self._game:varbit(SUMMONING_POINTS)
+  local raw = self._game:varbit(SUMMONING_POINTS:id())
   return raw < 0 and -1 or raw // TENTHS
 end
 
@@ -110,7 +112,7 @@ function Combat:target()
 end
 
 function Combat:is_in_combat(history)
-  if self._game:varbit(IN_COMBAT_FLAG) == IN_COMBAT then return true end
+  if self._game:varbit(IN_COMBAT_FLAG:id()) == IN_COMBAT then return true end
   local me = self._game:self()
   if has_target(me) then return true end
   return history ~= nil

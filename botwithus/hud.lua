@@ -19,13 +19,14 @@
 
 local Definitions = require("botwithus.definitions")
 local Actions = require("botwithus.actions")
+local G = require("botwithus.gameval")
 
 local Hud = {}
 Hud.__index = Hud
 
-local RIBBON = 1431
-local RIBBON_BUTTONS = 0
-local RIBBON_WINDOWS = 13319
+-- By gameval name (host ABI 8); the number is the fallback when the name does not resolve.
+local RIBBON_BUTTONS = G.component_ref("TOPLEVEL_V2_RIBBON__WINDOW_BUILD", 1431, 0)
+local RIBBON_WINDOWS = G.ref("enum", "RIBBON_WINDOWS", 13319)
 Hud.OPEN = "Open"
 Hud.CLOSE = "Close"
 
@@ -41,7 +42,7 @@ function Hud.new(game) return setmetatable({ _game = game }, Hud) end
 
 -- The ribbon slot (the button's sub) of `tab`.
 function Hud:slot_of(tab)
-  local ok, e = pcall(Definitions.enum, RIBBON_WINDOWS)
+  local ok, e = pcall(Definitions.enum, RIBBON_WINDOWS:id())
   if ok and e then
     for slot, window in pairs(e.entries) do
       if window == tab.window then return slot end
@@ -51,7 +52,8 @@ function Hud:slot_of(tab)
 end
 
 function Hud:_button_ops(tab, slot)
-  local reply = self._game:component_ops(RIBBON, RIBBON_BUTTONS, slot)
+  local ribbon, buttons = RIBBON_BUTTONS:component()
+  local reply = self._game:component_ops(ribbon, buttons, slot)
   return type(reply) == "table" and reply.ops or {}
 end
 
@@ -75,7 +77,8 @@ function Hud:open(tab)
   if op_named(ops, Hud.CLOSE) then return true end
   local open = op_named(ops, Hud.OPEN)
   if open == nil then return false end
-  self._game:do_action(Actions.component_click(RIBBON, RIBBON_BUTTONS, open, slot))
+  local ribbon, buttons = RIBBON_BUTTONS:component()
+  self._game:do_action(Actions.component_click(ribbon, buttons, open, slot))
   return true
 end
 

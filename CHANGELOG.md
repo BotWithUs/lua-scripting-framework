@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **Native host ABI 8: gameval names, a millisecond clock, pause from the GUI, a settings store,
+  object animations** (native-scripting-host feat/n3-host-gaps).
+  - `botwithus.gameval`: the host's gameval index (`bwu.gameval_*`) by the Java `GamevalType`
+    strings; `G.ref(type, name, fallback):id()`. Every pinned Java `GamevalRef` fallback id now
+    resolves by its name first: the action bar (slot variables all of one bar or the generated
+    table, slot buttons, current bar, global cooldown varcs, `COMBATV2_TYPE_TO_ENUM`), prayers (73
+    struct and varbit names and the rest), combat, HUD, bank, buffs, summoning, lodestones, chat
+    pages, item destruction, deposit box and loot; a name that does not resolve uses the old id
+    with one warning. Quests are listed from the index (the id scan is the fallback), and
+    `status` takes a quest gameval name.
+  - Timers and waits read `bwu.monotonic_ms` (`Timers.now_ms`, `Timers.has_ms_clock`):
+    millisecond resolution instead of `os.time()`'s seconds. `Clients:wait_for` too.
+  - Pause: in a GUI worker the run's switch is the host's (`Timing.HostPause`): `ctx:pause()` /
+    `ctx:resume()` reach the GUI, and the GUI's pause button holds `on_loop` and the waits.
+  - Settings: `ctx.settings` starts from the map the last run saved, under the config, and
+    `save()` sends it, as strings, to the GUI's store; a refusal is false, why.
+  - Objects: loc rows carry `animation_id`, so `:animating()` / `:with_animation(...)` work on
+    `Entities.objects`.
+  - Needs host ABI 8; on an older host the names fall back to the old ids, the clock is
+    `os.time()`, `save()` is false, "unsupported" and the GUI cannot pause the run.
+
 - **Plugin UI P2: interactive components and hook subscriptions (`botwithus.game_ui`, needs an
   agent from NXTLibrary a17edc4 and a native host with `bwu.ui_subscribe`, native-scripting-host
   7bb38a4; no protocol change).** Additive: every P1 script runs unchanged.

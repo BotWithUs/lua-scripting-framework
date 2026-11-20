@@ -95,7 +95,7 @@ end
 -- The Java host's entity filters (J1) ----------------------------------------------------------
 --
 -- Fields a row lacks never match a filter on them: an NPC's hp needs host ABI 5, and an object
--- row carries no animation, stance or health.
+-- row carries no stance or health (its animation_id needs host ABI 8).
 
 local function id_set(...)
   local set = {}
@@ -143,7 +143,7 @@ function Query:with_option(option)
   return self:filter(function(e) return Interact.has_option(kind, e, option) end)
 end
 
--- Animation (NPCs, players): animation_id -1 is "not animating".
+-- Animation (NPCs, players, and objects from host ABI 8): animation_id -1 is "not animating".
 function Query:animating()
   return self:filter(function(e) return e.animation_id ~= nil and e.animation_id ~= -1 end)
 end

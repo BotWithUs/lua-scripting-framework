@@ -25,9 +25,10 @@
 -- needs something else to resume it -- a plugin-UI handler or a client-management event
 -- handler, both of which run inside the waits.
 --
--- TIME. The waits count the milliseconds they slept (the host's stop-aware ctl_wait, a real
--- sleep) and also watch os.time(), so slow condition checks cannot stretch a timeout by more
--- than about one second. A wait never ends before its timeout has really passed.
+-- TIME. The waits read the host's millisecond monotonic clock, bwu.monotonic_ms (host ABI 8). On
+-- an older host they count the milliseconds they slept (the host's stop-aware ctl_wait, a real
+-- sleep) and also watch os.time(), so slow condition checks cannot stretch a timeout by more than
+-- about one second. A wait never ends before its timeout has really passed.
 
 local Ctl = require("botwithus.ctl")
 
@@ -49,6 +50,22 @@ local MS_PER_SECOND = 1000
 local Pause = {}
 Pause.__index = Pause
 
+-- The run's pause switch held by the native host (host ABI 8, GUI worker only): the GUI flips it
+-- with set_paused, the script with ctx:pause() / ctx:resume(), and both sides see every change.
+-- Lua has one thread, so it reads the switch where it holds instead of waiting on it.
+local HostPause = {}
+HostPause.__index = HostPause
+
+function HostPause.new(b) return setmetatable({ _b = b }, HostPause) end
+function HostPause:pause() self._b.ctl_set_paused(true) end
+function HostPause:resume()
+  local was = self:is_paused()
+  self._b.ctl_set_paused(false)
+  return was
+end
+function HostPause:is_paused() return (self._b.ctl_paused()) == true end
+Timing.HostPause = HostPause
+
 function Pause.new() return setmetatable({ _paused = false }, Pause) end
 function Pause:pause() self._paused = true end
 -- Resumes; returns whether it was paused.
@@ -66,6 +83,11 @@ Timing.Pause = Pause
 -- A millisecond clock that never runs ahead of real time: the larger of the milliseconds slept
 -- through it and the whole seconds of os.time() less one.
 local function counting_clock()
+  local b = rawget(_G, "bwu")
+  if b ~= nil and b.monotonic_ms ~= nil then
+    -- The host's monotonic clock: real milliseconds, so nothing needs counting.
+    return { now = b.monotonic_ms, add = function() end }
+  end
   local slept, t0 = 0, os.time()
   return {
     now = function() return math.max(slept, (os.time() - t0 - 1) * MS_PER_SECOND) end,
@@ -215,8 +237,13 @@ Waiter.delay_until_ticks = Waiter.until_ticks
 
 -- The run pause a Game carries (created on first use; botwithus.script gives each run's Game
 -- one, so ctx:pause() and every wait bound to that Game share it).
+-- The run's pause switch: the host's in a GUI worker on host ABI 8, else this frontend's own.
 function Timing.pause_of(game)
-  if game._pause == nil then game._pause = Pause.new() end
+  if game._pause == nil then
+    local b = rawget(_G, "bwu")
+    local hosted = b ~= nil and b.ctl_paused ~= nil and Ctl.is_worker()
+    game._pause = hosted and HostPause.new(b) or Pause.new()
+  end
   return game._pause
 end
 

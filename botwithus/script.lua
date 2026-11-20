@@ -160,7 +160,7 @@ local function make_ctx(game, wait, clients)
   function ctx:pause() pause:pause() end
   function ctx:resume() return pause:resume() end
   function ctx:is_paused() return pause:is_paused() end
-  -- Writable settings over ctx.config (botwithus.settings); not persisted by the host yet.
+  -- Writable settings over ctx.config (botwithus.settings); saved by the GUI in a worker (ABI 8).
   ctx.settings = Settings.new(function() return ctx.config end)
   return ctx
 end
