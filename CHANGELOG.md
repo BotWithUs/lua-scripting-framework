@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **Host ABI 7: cache definitions, world map elements, avoid areas and route links (needs a native
+  host at `BWU_ABI_VERSION` 7; wire v25 unchanged).** On an older host each raises naming ABI 7.
+  - `botwithus.definitions` (`bot.Definitions`): `item` / `npc` / `loc` (names, ops, stackable,
+    noted, members, category, ...), `params`, `int_param`, `json` for the long tail, `item_name`
+    (kept on this side), `available()`. A missing id is nil; no cache raises with the host's reason.
+  - Inventory views match by item name: a string matcher (`bp:count("logs")`), names from the
+    cache by default, a note reading as its item; `:count_named(name, names)` / `:find_named` /
+    `:find_all_named` / `:contains_named` take your own resolver.
+  - `botwithus.worldmap` (`bot.WorldMap`): `elements(area_id, filter)` / `nearest(x, y, filter)`,
+    area 28 (the main world) by default, `area_id` kept.
+  - Walk options take `avoid = { ... }` (`botwithus.walk`: `area`, `box`, `around`, `contains`,
+    `MAX_AVOID`); `game:path_route(x, y, plane, opts)` returns `{ steps, links }`
+    (`walk.teleports(route)`); `game:has_avoid()`. Refused, never ignored, on an older host or a
+    worldwalker.dll before WorldWalker #44.
+  - Tests: `spec/n2_spec.lua` (fake surface `install_abi7`; the fake defaults to ABI 7).
+
 - **Host ABI 6 calls (needs a native host at `BWU_ABI_VERSION` 6; wire v25 unchanged; the agent
   RPCs of NXTLibrary 0f746b4).** On an older host each raises naming ABI 6;
   `game:has_abi6_calls()` tells.

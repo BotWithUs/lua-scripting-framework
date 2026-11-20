@@ -29,7 +29,7 @@ local specs = { "spec.api_spec", "spec.orientation_spec", "spec.input_spec", "sp
                 "spec.variables_spec", "spec.walk_spec", "spec.actions_spec", "spec.events_spec",
                 "spec.queue_break_spec", "spec.example_spec", "spec.config_spec",
                 "spec.worker_spec", "spec.game_ui_spec", "spec.events_parity_spec", "spec.parity_spec",
-                "spec.client_reads_spec" }
+                "spec.client_reads_spec", "spec.n2_spec" }
 
 local passed, failed = 0, 0
 local failures = {}

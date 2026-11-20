@@ -49,9 +49,10 @@ T["equipment and the inventory list"] = function(assert_)
   assert_(#list == 2 and list[1].inv_id == 93 and list[1].slot_count == 4, "listed")
 end
 
-T["an inventory matcher that is not an id, list or function raises"] = function(assert_)
+T["an inventory matcher that is not an id, list, name or function raises"] = function(assert_)
+  -- A string is a name matcher since host ABI 7 (spec/n2_spec.lua); a boolean is nothing.
   local bp = attach():backpack()
-  local ok, err = pcall(bp.contains, bp, "logs")
+  local ok, err = pcall(bp.contains, bp, true)
   assert_(not ok and tostring(err):find("matcher", 1, true), tostring(err))
 end
 
