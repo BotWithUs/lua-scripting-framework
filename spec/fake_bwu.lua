@@ -74,7 +74,7 @@ function M.new(opts)
     var_calls = {},
     defaults_status = opts.defaults_status or 1,
   }
-  local bwu = { PROTOCOL_VERSION = opts.protocol_version or 25, ABI_VERSION = opts.abi or 6, MAX_ACTION_BATCH = 128, _state = state,
+  local bwu = { PROTOCOL_VERSION = opts.protocol_version or 25, ABI_VERSION = opts.abi or 7, MAX_ACTION_BATCH = 128, _state = state,
                 -- BWU_VARP_* / BWU_VAR_KIND_* as native-scripting-host exports them
                 VARP_UNAVAILABLE = 0, VARP_DEFAULT_NOT_SET_CLIENTSIDE = 1, VARP_SET = 2,
                 VARP_NO_SUCH_VARP = 3, VAR_KIND_UNKNOWN = -1, VAR_KIND_INT = 0, VAR_KIND_LONG = 1,
@@ -305,8 +305,9 @@ function M.new(opts)
   end
 
   if not opts.no_ui then M.install_ui(bwu) end
-  if (opts.abi or 6) >= 5 then M.install_abi5(bwu, opts) end
-  if (opts.abi or 6) >= 6 then M.install_abi6(bwu, opts) end
+  if (opts.abi or 7) >= 5 then M.install_abi5(bwu, opts) end
+  if (opts.abi or 7) >= 6 then M.install_abi6(bwu, opts) end
+  if (opts.abi or 7) >= 7 then M.install_abi7(bwu, opts) end
   if opts.no_cm then return bwu end
   M.install_cm(bwu, opts)
   return bwu
@@ -530,6 +531,143 @@ function M.install_abi6(bwu, opts)
     return { 42 }
   end
   function bwu.destroy_script_handle(_, handle) record("destroy_script_handle", handle); return true end
+end
+
+-- Host ABI 7: cache definitions, world map elements, avoid areas and route links, in the shape
+-- src/embed_lua_cache.c / embed_lua.c return. Every value differs from a zeroed default.
+--   opts.no_cache       a host whose cache cannot open: every read is nil, "NXTCache.dll not found ..."
+--   opts.cannot_avoid   a worldwalker.dll before WorldWalker #44: a walk or path with areas, and any
+--                       path_route, raise the host's refusal
+-- bwu._abi7 = { calls = { {name, ...}, ... }, item_reads = n }.
+local ABI7_ITEMS = {
+  [1511] = { id = 1511, name = "Logs", members = false, stackable = false, noted = false,
+             noted_id = 1512, category = 22, shop_price = 4, ge_buy_limit = 25000,
+             exchangeable = true, wearpos = -1, wearpos2 = -1, wearpos3 = -1, param_count = 5,
+             text_truncated = 0, inventory_ops = { "Craft", "Light", "", "", "" },
+             ground_ops = { "", "", "Take", "Light", "" } },
+  [1512] = { id = 1512, name = "Logs", members = false, stackable = true, noted = true,
+             noted_id = 1511, category = 0, shop_price = 4, ge_buy_limit = 0, exchangeable = true,
+             wearpos = -1, wearpos2 = -1, wearpos3 = -1, param_count = 0, text_truncated = 0,
+             inventory_ops = { "", "", "", "", "" }, ground_ops = { "", "", "Take", "", "" } },
+  [4151] = { id = 4151, name = "Abyssal whip", members = true, stackable = false, noted = false,
+             noted_id = 4152, category = 150, shop_price = 120001, ge_buy_limit = 70,
+             exchangeable = true, wearpos = 3, wearpos2 = 5, wearpos3 = -1, param_count = 2,
+             text_truncated = 0, inventory_ops = { "", "Wield", "", "", "" },
+             ground_ops = { "", "", "Take", "", "" } },
+}
+
+local function wme(area, element, x, y, plane, category, name, tooltip)
+  return { area_id = area, element_id = element, x = x, y = y, plane = plane or 0, flags = 0,
+           category = category or 2613, sprite_id = -1, name = name or "", tooltip = tooltip or "",
+           text_truncated = 0 }
+end
+
+local ABI7_AREAS = {
+  [28] = { wme(28, 3612, 3233, 3222), wme(28, 3640, 4576, 2665),
+           wme(28, 9, 3240, 3230, 0, 1157, "Bob's Axes", "Shop"),
+           wme(28, 10, 3300, 3300, 1, 1157, "", "Lumbridge castle") },
+  [231] = { wme(231, 3640, 2208, 3361) },
+}
+
+local ABI7_ROUTE = {
+  steps = { { kind = 1, plane = 0, x = 3233, y = 3221 }, { kind = 0, plane = 0, x = 3240, y = 3230 },
+            { kind = 1, plane = 0, x = 2801, y = 3003 } },
+  links = {
+    { step_index = 0, transition_index = 300, kind = 4, move_category = 6, origin = 2, object_id = -1,
+      from = { x = -1, y = -1, plane = -1 }, to = { x = 3233, y = 3221, plane = 0 }, code = "",
+      name = "Lumbridge lodestone" },
+    { step_index = 2, transition_index = 301, kind = 1, move_category = 7, origin = 0,
+      object_id = 12128, from = { x = 3240, y = 3230, plane = 0 }, to = { x = 2801, y = 3003, plane = 0 },
+      code = "CKS", name = "" },
+  },
+}
+
+local CANNOT_AVOID = "this worldwalker.dll predates avoid areas (no ww_path_links / ww_query_opts):"
+                     .. " cannot avoid areas; update worldwalker.dll"
+
+function M.install_abi7(bwu, opts)
+  opts = opts or {}
+  local st = { calls = {}, item_reads = 0 }
+  bwu._abi7 = st
+  local function record(...) st.calls[#st.calls + 1] = table.pack(...) end
+  local function no_cache()
+    if opts.no_cache then return "NXTCache.dll not found in ~/.botwithus/native" end
+    return nil
+  end
+  function bwu.cache_status()
+    if opts.no_cache then return nil, no_cache() end
+    return 1
+  end
+  function bwu.cache_item(id)
+    record("cache_item", id)
+    if opts.no_cache then return nil, no_cache() end
+    if math.type(id) ~= "integer" or id < 0 then error("bwu.cache_item: a cache id is never negative") end
+    st.item_reads = st.item_reads + 1
+    local d = ABI7_ITEMS[id]
+    if d == nil then return nil, "not_found" end
+    return d
+  end
+  function bwu.cache_npc(id)
+    if opts.no_cache then return nil, no_cache() end
+    if id ~= 2001 then return nil, "not_found" end
+    return { id = 2001, name = "Fixture guard", combat_level = 88, visible = true, clickable = false,
+             varbit_id = 555, varp_id = -1, transform_count = 3, param_count = 1, text_truncated = 0,
+             ops = { "Talk-to", "", "Attack", "", "" } }
+  end
+  function bwu.cache_loc(id)
+    if opts.no_cache then return nil, no_cache() end
+    if id ~= 3001 then return nil, "not_found" end
+    return { id = 3001, name = "Fixture door", size_x = 2, size_y = 3, interact_type = 2, solid_type = 1,
+             members = true, varbit_id = -1, varp_id = 1234, transform_count = 1, map_sprite_id = 17,
+             param_count = 0, text_truncated = 0, ops = { "Open", "", "", "", "Examine" } }
+  end
+  function bwu.cache_params(cache_type, id)
+    record("cache_params", cache_type, id)
+    if opts.no_cache then return nil, no_cache() end
+    if cache_type ~= 0 or id ~= 4151 then return nil, "not_found" end
+    return { { param_id = 14, kind = 0, value = 4, text_truncated = false },
+             { param_id = 555, kind = 1, text = "Whip", text_truncated = true } }
+  end
+  function bwu.cache_json(cache_type, id)
+    if opts.no_cache then return nil, no_cache() end
+    if cache_type == 3 and id == 5001 then return '{"id":5001,"entries":{"1":"one"}}' end
+    return nil, "not_found"
+  end
+  function bwu.worldmap_elements(area_id)
+    record("worldmap_elements", area_id)
+    if opts.no_cache then return nil, no_cache() end
+    if area_id == -1 then
+      local all = {}
+      for _, e in ipairs(ABI7_AREAS[28]) do all[#all + 1] = e end
+      for _, e in ipairs(ABI7_AREAS[231]) do all[#all + 1] = e end
+      return all
+    end
+    local found = ABI7_AREAS[area_id]
+    if found == nil then return nil, "not_found" end
+    return found
+  end
+  function bwu.path_route(_, x, y, plane, o)
+    record("path_route", x, y, plane, o)
+    if opts.cannot_avoid then
+      error("bwu.path_route: this worldwalker.dll has no ww_path_links: cannot list route links;"
+            .. " update worldwalker.dll", 0)
+    end
+    return ABI7_ROUTE
+  end
+  -- Wrap the walk calls: an areas table on a walker before #44 is the host's refusal.
+  for _, name in ipairs({ "path", "walk", "walk_ex", "walk_start" }) do
+    local inner = bwu[name]
+    if inner ~= nil then
+      bwu[name] = function(h, ...)
+        local args = table.pack(...)
+        local o = args[args.n]
+        if opts.cannot_avoid and type(o) == "table" and o.avoid ~= nil and #o.avoid > 0 then
+          error("bwu." .. name .. ": " .. CANNOT_AVOID, 0)
+        end
+        return inner(h, ...)
+      end
+    end
+  end
 end
 
 local function ui_type_ok(kind, v)

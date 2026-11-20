@@ -202,7 +202,9 @@ gives you `sleep_ticks`, not a millisecond timer, on purpose.
 | `botwithus.tile` | `Tile` with Chebyshev (8-directional) distance |
 | `botwithus.actions` | action ids + builders: `walk_to(x, y)`, `component_click(iface, comp [, option = 1 [, sub_slot = -1]])`, `dialogue_option(iface, comp)` |
 | `botwithus.events` | agent event decoding for `Game:poll_events()`: `varp_change` / `varbit_change` / `varc_change` (`id`, `old_value`, `new_value`), `obj_var_change` (`inv_id`, `slot`, `var_id`, ...), `chat_message` (`msg_type`, `sender`, `text`), `hitmark`, `headbar`, `spot_anim` (`target_index`, `target_type`: `TARGET_PLAYER` / `TARGET_NPC`), `action_refused` (`reason_name` `no_target` / `anchor_timeout` / `no_opener`, `anchor_name`, `held_ms`), `action_executed` and `key_input` (`key`, `is_alt` / `is_ctrl` / `is_shift`, `synthetic`, `text_input_focused`, `is_repeat`); other types pass through as raw `{ type, body }` |
-| `botwithus.inventory` | an inventory view (`game:backpack()` ...): `:count(m)` (stacks summed), `:contains(m)`, `:find(m)` / `:find_all(m)`, `:items()`, `:slots()`, `:slot(n)` (0-based), `:free_slots()`, `:is_empty()` / `:is_full()`, `:is_present()`. A matcher `m` is an item id, a list of ids or a predicate. A closed bank is absent, not empty |
+| `botwithus.inventory` | an inventory view (`game:backpack()` ...): `:count(m)` (stacks summed), `:contains(m)`, `:find(m)` / `:find_all(m)`, `:items()`, `:slots()`, `:slot(n)` (0-based), `:free_slots()`, `:is_empty()` / `:is_full()`, `:is_present()`. A matcher `m` is an item id, a list of ids, a predicate, or (host ABI 7) an item name: a case-insensitive substring, names from the cache, a note reading as its item. `:count_named(name, names)` / `:find_named` / `:find_all_named` / `:contains_named` take your own `names` function. A closed bank is absent, not empty |
+| `botwithus.definitions` | host ABI 7: cache definitions. `item(id)` / `npc(id)` / `loc(id)` (names, ops, stackable, noted, members, category, ...), `params(type, id)`, `int_param`, `json(type, id)` for the long tail (enum, struct, param, varbit, inv, quest, world map element), `item_name(id)`, `available()`. A missing id is nil; no cache raises with the host's reason |
+| `botwithus.worldmap` | host ABI 7: world map elements. `elements(area_id, { name, category, near, radius, plane })` (area 28, the main world, by default; `area_id` kept), `nearest(x, y, filter)`, `MAIN_AREA_ID` / `ALL_AREAS` |
 | `botwithus.skills` | skill ids by name (`Skills.WOODCUTTING`), `Skills.name(id)`, `Skills.id(name)` |
 | `botwithus.components` | the interface component reads over the agent's RPCs, and `pack` / `unpack` of `(iface << 16) \| comp`. For dynamic children with their sub ids use `game:dynamic_children_with_sub` (host ABI 6) |
 | `botwithus.grand_exchange` | host ABI 6: `game:ge_offers()` rows with `in_use` / `is_sell`, `GrandExchange.in_use(offers)`, the stage and type constants |
@@ -323,6 +325,42 @@ Options are never silently ignored:
 - Anything else on a bwu_host without options (`g:has_walk_options()` false) raises.
 - An exclusion on a worldwalker.dll that cannot honour it raises "cannot exclude
   transitions". `g:walk_options_supported()` tells you in advance.
+
+**Avoid areas and route links (host ABI 7, WorldWalker #44).** `avoid = { ... }` in the same table
+lists tile rectangles the walker never routes through (`W.area(min_x, min_y, max_x, max_y[,
+plane])`, `W.box(x1, y1, x2, y2[, plane])`, `W.around(x, y, r[, plane])`; no plane means every
+plane; at most 64). No walk step lands on one, no door, boat or teleport is taken that starts or
+lands in one, and the walk clicks round them a step at a time when near. An area holding the start
+or the goal is lifted for that plan. A route that can only cross one fails with no route.
+`g:path_route(x, y, plane, opts)` plans once and returns `{ steps, links }`: the transports and
+teleports in order, each with `kind`, `origin`, `object_id`, `from`, `to`, fairy-ring `code` and
+teleport `name` (`W.teleports(route)` picks the global teleports).
+
+```lua
+local guards = W.around(3222, 3218, 4, 0)
+local r = g:walk_ex(3165, 3486, 0, 2, { avoid = { guards } })
+local route = g:path_route(3165, 3486, 0, { avoid = { guards } })
+for _, link in ipairs(route.links) do print(link.kind, link.name, link.to.x, link.to.y) end
+```
+
+Areas are refused, never ignored: on a bwu_host older than ABI 7 (`g:has_avoid()` false) here, and
+on a worldwalker.dll older than WorldWalker #44 with the host's "cannot avoid areas". An empty
+`avoid` is the old call.
+
+## Cache definitions and the world map (host ABI 7)
+
+```lua
+local Defs, WorldMap = require("botwithus.definitions"), require("botwithus.worldmap")
+local whip = Defs.item(4151)                     -- whip.name, whip.inventory_ops[2] == "Wield"
+print(Defs.item_name(1512))                      -- "Logs": a note reads as its item
+local lodestone = WorldMap.nearest(3233, 3222, { category = 2613, radius = 10 })
+```
+
+Every world map element belongs to an area, and its tile is in that area's map space. Area 28,
+the default, draws a few regions (Prifddinas, Ashdale) away from their real tiles and places them
+again, at the real tile, in their own area: the Prifddinas lodestone is (4576, 2665) in area 28 and
+(2208, 3361) in area 231. Many definitions have no name (the lodestones among them): match by
+`category` and tile.
 
 ## Varps and varbits: decide on the state, not the value
 

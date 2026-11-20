@@ -783,8 +783,13 @@ function Game:walk_to(x, y)
   return self:do_action(Actions.walk_to(x, y))
 end
 
--- Walk plan options: an optional trailing table on :path / :walk / :walk_ex / :walk_start,
---   { disabled_moves = W.moves_mask(W.MOVE_CHARTERS), exclude = { 42 }, exclude_loc_siblings = true }
+-- Walk plan options: an optional trailing table on :path / :path_route / :walk / :walk_ex /
+-- :walk_start,
+--   { disabled_moves = W.moves_mask(W.MOVE_CHARTERS), exclude = { 42 }, exclude_loc_siblings = true,
+--     avoid = { W.around(3222, 3218, 4, 0) } }
+-- `avoid` (native ABI 7, WorldWalker #44) lists areas the walker never routes through (see
+-- botwithus.walk: area / box / around); a bwu_host older than ABI 7 refuses it here, and a
+-- worldwalker.dll older than #44 with the host's "cannot avoid areas".
 -- (W = botwithus.walk). `exclude` lists transition indices (result.fail_transition,
 -- transition.transition_index) the planner must not use, on every plan and re-plan of the
 -- walk. nil, or a table with every field at its default, makes exactly the call made before
@@ -795,6 +800,7 @@ local function is_default_option(k, v)
   if k == "disabled_moves" then return v == 0 end
   if k == "exclude" then return type(v) == "table" and next(v) == nil end
   if k == "exclude_loc_siblings" then return v == false end
+  if k == "avoid" then return type(v) == "table" and next(v) == nil end
   return false   -- an unknown key goes to the host, which names it in its error
 end
 
@@ -811,7 +817,16 @@ local function walk_opts(opts)
     error("botwithus: this bwu_host has no walk options (disabled_moves / exclude /"
           .. " exclude_loc_siblings); it predates them -- update it", 3)
   end
+  if not is_default_option("avoid", opts.avoid or {}) and surface().path_route == nil then
+    error("botwithus: this bwu_host has no avoid areas; it predates them (native ABI 7)"
+          .. " -- update it", 3)
+  end
   return opts
+end
+
+-- Whether this bwu_host takes avoid areas and plans routes with links (native ABI 7).
+function Game:has_avoid()
+  return surface().path_route ~= nil
 end
 
 -- Whether this bwu_host takes walk options at all (see :walk_options_supported).
@@ -839,6 +854,27 @@ function Game:path(x, y, plane, opts)
   end
   if not steps then error("botwithus: path failed: " .. tostring(err), 2) end
   return steps
+end
+
+-- Plan ONE route to a goal tile and return it as { steps = {...}, links = {...} }: its steps and,
+-- in order, the transports and teleports it takes (each { step_index, transition_index, kind,
+-- move_category, origin, object_id, from, to, code, name }; see botwithus.walk). Raises on no
+-- route, on a bwu_host without route links (native ABI 7) and on a worldwalker.dll without them.
+function Game:path_route(x, y, plane, opts)
+  local fn = surface().path_route
+  if fn == nil then
+    error("botwithus: this bwu_host has no path_route (route links); it predates them"
+          .. " (native ABI 7) -- update it", 2)
+  end
+  local o = walk_opts(opts)
+  local route, err
+  if o == nil then
+    route, err = fn(host(self), x, y, plane or 0)
+  else
+    route, err = fn(host(self), x, y, plane or 0, o)
+  end
+  if not route then error("botwithus: path_route failed: " .. tostring(err), 2) end
+  return route
 end
 
 -- Calls `fn` with the goal, adding the options table only when there is one: a bwu_host

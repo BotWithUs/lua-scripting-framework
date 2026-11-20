@@ -33,6 +33,9 @@ M.Components = require("botwithus.components")
 M.GrandExchange = require("botwithus.grand_exchange")
 M.Worlds     = require("botwithus.worlds")
 M.Target     = require("botwithus.target")
+-- Host ABI 7: cache definitions (items, NPCs, locs, the JSON long tail) and world map elements.
+M.Definitions = require("botwithus.definitions")
+M.WorldMap   = require("botwithus.worldmap")
 
 -- Plugin UI: native game components shaped like Jagex's `ui.*` (see botwithus/game_ui.lua).
 -- Reached per Game: `local ui = game:ui()` (or ctx.ui in bot.run), then ui.Canvas.new(...).
