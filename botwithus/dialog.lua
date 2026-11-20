@@ -17,6 +17,7 @@
 -- trip; every press is a queued dialogue action, sent only while its page is open.
 
 local Actions = require("botwithus.actions")
+local G = require("botwithus.gameval")
 local CQ = require("botwithus.component_query")
 
 local Dialog = {}
@@ -29,10 +30,16 @@ local NPC_CHAT_CONTINUE = 15
 
 -- The chat pages, checked in this order: { name, iface, text comp, title comp, continue comp }.
 Dialog.PAGES = {
-  { name = "npc", iface = 1184, text = 10, title = 4, continue = 15 },      -- CHAT_V2_LEFT
-  { name = "player", iface = 1191, text = 10, title = 4, continue = 15 },   -- CHAT_V2_RIGHT
-  { name = "message", iface = 1186, text = 3, continue = 8 },               -- MESBOX_V2
-  { name = "object", iface = 1189, text = 3, continue = 20 },               -- OBJBOX_V2
+  -- The ids are the fallbacks; `gameval` and `names` (text, title, continue) are the Java host's
+  -- ChatPage names (host ABI 8). A component is "<interface>__<name>".
+  { name = "npc", iface = 1184, text = 10, title = 4, continue = 15,
+    gameval = "CHAT_V2_LEFT", names = { "CHAT_TEXT", "TITLE_TEXT", "CLICK_CONTINUE" } },
+  { name = "player", iface = 1191, text = 10, title = 4, continue = 15,
+    gameval = "CHAT_V2_RIGHT", names = { "CHAT_TEXT", "TITLE_TEXT", "CLICK_CONTINUE" } },
+  { name = "message", iface = 1186, text = 3, continue = 8,
+    gameval = "MESBOX_V2", names = { "MESBOX_TEXT", nil, "CLICK_CONTINUE" } },
+  { name = "object", iface = 1189, text = 3, continue = 20,
+    gameval = "OBJBOX_V2", names = { "OBJBOX_TEXT", nil, "CLICK_CONTINUE" } },
 }
 
 local function dialogue_action(iface, comp)
@@ -48,10 +55,23 @@ end
 
 local function normalize(text) return Dialog.plain(text):lower() end
 
--- The open chat page row (see Dialog.PAGES), or nil.
+-- A page's row with every id resolved by its gameval name.
+local function resolved(page)
+  local function comp(index, fallback)
+    if fallback == nil or page.names[index] == nil then return nil end
+    local _, c = G.component_ref(page.gameval .. "__" .. page.names[index], page.iface, fallback):component()
+    return c
+  end
+  return { name = page.name, iface = G.ref("interface", page.gameval, page.iface):id(),
+           text = comp(1, page.text), title = comp(2, page.title), continue = comp(3, page.continue) }
+end
+Dialog._resolved = resolved
+
+-- The open chat page row (see Dialog.PAGES), its ids resolved by name, or nil.
 function Dialog.open_page(game)
   for _, page in ipairs(Dialog.PAGES) do
-    if game:is_interface_open(page.iface) then return page end
+    local named = resolved(page)
+    if game:is_interface_open(named.iface) then return named end
   end
   return nil
 end
@@ -163,21 +183,27 @@ end
 -- ConfirmItemDestruction (1183) -------------------------------------------------------------
 
 local Confirm = {}
-Confirm.INTERFACE = 1183     -- CONFIRM_DESTROY_V2
+Confirm.INTERFACE = 1183     -- CONFIRM_DESTROY_V2 (the fallback)
 local YES, NO, ITEM_NAME = 7, 8, 4
+local CONFIRM_REF = G.ref("interface", "CONFIRM_DESTROY_V2", Confirm.INTERFACE)
+local CONFIRM_COMPONENTS = {
+  [YES] = G.component_ref("CONFIRM_DESTROY_V2__BUTTON_YES", Confirm.INTERFACE, YES),
+  [NO] = G.component_ref("CONFIRM_DESTROY_V2__BUTTON_NO", Confirm.INTERFACE, NO),
+  [ITEM_NAME] = G.component_ref("CONFIRM_DESTROY_V2__DESTROY_NAME", Confirm.INTERFACE, ITEM_NAME),
+}
 
-function Confirm.is_open(game) return game:is_interface_open(Confirm.INTERFACE) end
+function Confirm.is_open(game) return game:is_interface_open(CONFIRM_REF:id()) end
 
 -- The item being destroyed, as plain text, or nil when the prompt is closed.
 function Confirm.item_name(game)
   if not Confirm.is_open(game) then return nil end
-  local text = read_text(game, Confirm.INTERFACE, ITEM_NAME)
+  local text = read_text(game, CONFIRM_COMPONENTS[ITEM_NAME]:component())
   return text and Dialog.plain(text) or nil
 end
 
 local function press(game, comp)
   if not Confirm.is_open(game) then return false end
-  game:do_action(dialogue_action(Confirm.INTERFACE, comp))
+  game:do_action(dialogue_action(CONFIRM_COMPONENTS[comp]:component()))
   return true
 end
 

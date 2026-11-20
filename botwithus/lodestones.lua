@@ -18,6 +18,7 @@
 -- Results: Lodestones.ARRIVED, LOCKED, NETWORK_UNAVAILABLE, TIMED_OUT, NOT_IN_GAME.
 
 local Actions = require("botwithus.actions")
+local G = require("botwithus.gameval")
 local Timing = require("botwithus.timing")
 
 local Lodestones = {}
@@ -34,6 +35,9 @@ local OP_TELEPORT = 1
 local IN_GAME = 30
 local MINIMAP = 1465                  -- TOPLEVEL_V2_MINIMAP
 local HOME_BUTTON = 34                -- TOPLEVEL_V2_MINIMAP__HOME_TELEPORT
+-- By gameval name (host ABI 8); the number is the fallback when the name does not resolve.
+local NETWORK_REF = G.ref("interface", "THAS_LODESTONE_MAP", Lodestones.NETWORK_INTERFACE)
+local HOME_REF = G.component_ref("TOPLEVEL_V2_MINIMAP__HOME_TELEPORT", MINIMAP, HOME_BUTTON)
 Lodestones.OPEN_OPTION = "Lodestone Network"
 -- The repeat option is named after the last lodestone ("Teleport Burthorpe").
 Lodestones.PREVIOUS_OPTION_PREFIX = "Teleport "
@@ -47,41 +51,44 @@ Lodestones.NOT_IN_GAME = "not_in_game"
 -- { key, button comp on 1092, unlock varbit, unlocked when the varbit is at least }. Lunar Isle
 -- and Bandit Camp unlock with their quests; Anachronia and Fort Forinthry with a build tier.
 local ROWS = {
-  { "AL_KHARID", 10, 28, 1 }, -- THAS_LODESTONE_MAP__AL_KHARID / THAS_ACTIVE_AL_KHARID
-  { "ANACHRONIA", 24, 44270, 1 }, -- THAS_LODESTONE_MAP__DINO_ISLAND / DINO_BASE_CAMP_BUILDING_TIER_LODESTONE
-  { "ARDOUGNE", 11, 29, 1 }, -- THAS_LODESTONE_MAP__ARDOUGNE / THAS_ACTIVE_ARDOUGNE
-  { "ASHDALE", 33, 22430, 1 }, -- THAS_LODESTONE_MAP__ASHDALE / THAS_ACTIVE_ASHDALE
-  { "BANDIT_CAMP", 8, 9482, 15 }, -- THAS_LODESTONE_MAP__ANCIENTS / DESERTTREASURE
-  { "BURTHORPE", 12, 30, 1 }, -- THAS_LODESTONE_MAP__BURTHORPE / THAS_ACTIVE_BURTHORPE
-  { "CANIFIS", 26, 18523, 1 }, -- THAS_LODESTONE_MAP__CANIFIS / THAS_ACTIVE_CANIFIS
-  { "CATHERBY", 13, 31, 1 }, -- THAS_LODESTONE_MAP__CATHERBY / THAS_ACTIVE_CATHERBY
-  { "CITY_OF_UM", 35, 53270, 1 }, -- THAS_LODESTONE_MAP__CITYOFUM / THAS_ACTIVE_CITYOFUM
-  { "DRAYNOR_VILLAGE", 14, 32, 1 }, -- THAS_LODESTONE_MAP__DRAYNOR / THAS_ACTIVE_DRAYNOR
-  { "EAGLES_PEAK", 27, 18524, 1 }, -- THAS_LODESTONE_MAP__EAGLES / THAS_ACTIVE_EAGLES
-  { "EDGEVILLE", 15, 33, 1 }, -- THAS_LODESTONE_MAP__EDGEVILLE / THAS_ACTIVE_EDGEVILLE
-  { "FALADOR", 16, 34, 1 }, -- THAS_LODESTONE_MAP__FALADOR / THAS_ACTIVE_FALADOR
-  { "FORT_FORINTHRY", 22, 52518, 1 }, -- THAS_LODESTONE_MAP__FORT / PLAYER_FORT_LODESTONE
-  { "FREMENNIK_PROVINCE", 28, 18525, 1 }, -- THAS_LODESTONE_MAP__FREMENNIK / THAS_ACTIVE_FREMENNIK
-  { "KARAMJA", 29, 18526, 1 }, -- THAS_LODESTONE_MAP__KARAMJA / THAS_ACTIVE_KARAMJA
-  { "LUMBRIDGE", 17, 35, 1 }, -- THAS_LODESTONE_MAP__LUMBRIDGE / THAS_ACTIVE_LUMBRIDGE
-  { "LUNAR_ISLE", 9, 10236, 100 }, -- THAS_LODESTONE_MAP__LUNAR / LUNAR_QUEST_MAIN
-  { "MENAPHOS", 23, 36173, 1 }, -- THAS_LODESTONE_MAP__MENAPHOS / THAS_ACTIVE_MENAPHOS
-  { "OOGLOG", 30, 18527, 1 }, -- THAS_LODESTONE_MAP__OOGLOG / THAS_ACTIVE_OOGLOG
-  { "PORT_SARIM", 18, 36, 1 }, -- THAS_LODESTONE_MAP__PORT_SARIM / THAS_ACTIVE_PORT_SARIM
-  { "PRIFDDINAS", 34, 24967, 1 }, -- THAS_LODESTONE_MAP__PRIFDDINAS / THAS_ACTIVE_PRIFDDINAS
-  { "SEERS_VILLAGE", 19, 37, 1 }, -- THAS_LODESTONE_MAP__SEERS / THAS_ACTIVE_SEERS
-  { "TAVERLEY", 20, 38, 1 }, -- THAS_LODESTONE_MAP__TAVERLEY / THAS_ACTIVE_TAVERLEY
-  { "TIRANNWN", 31, 18528, 1 }, -- THAS_LODESTONE_MAP__TIRRANWN / THAS_ACTIVE_TIRRANWN
-  { "VARROCK", 21, 39, 1 }, -- THAS_LODESTONE_MAP__VARROCK / THAS_ACTIVE_VARROCK
-  { "WENDLEWICK", 41, 60739, 1 }, -- THAS_LODESTONE_MAP__WENDLEWICK / THAS_ACTIVE_WENDLEWICK
-  { "WILDERNESS_CRATER", 32, 18529, 1 }, -- THAS_LODESTONE_MAP__WILDERNESS / THAS_ACTIVE_WILDERNESS
-  { "YANILLE", 25, 40, 1 }, -- THAS_LODESTONE_MAP__YANILLE / THAS_ACTIVE_YANILLE
+  { "AL_KHARID", 10, 28, 1, "THAS_LODESTONE_MAP__AL_KHARID", "THAS_ACTIVE_AL_KHARID" },
+  { "ANACHRONIA", 24, 44270, 1, "THAS_LODESTONE_MAP__DINO_ISLAND", "DINO_BASE_CAMP_BUILDING_TIER_LODESTONE" },
+  { "ARDOUGNE", 11, 29, 1, "THAS_LODESTONE_MAP__ARDOUGNE", "THAS_ACTIVE_ARDOUGNE" },
+  { "ASHDALE", 33, 22430, 1, "THAS_LODESTONE_MAP__ASHDALE", "THAS_ACTIVE_ASHDALE" },
+  { "BANDIT_CAMP", 8, 9482, 15, "THAS_LODESTONE_MAP__ANCIENTS", "DESERTTREASURE" },
+  { "BURTHORPE", 12, 30, 1, "THAS_LODESTONE_MAP__BURTHORPE", "THAS_ACTIVE_BURTHORPE" },
+  { "CANIFIS", 26, 18523, 1, "THAS_LODESTONE_MAP__CANIFIS", "THAS_ACTIVE_CANIFIS" },
+  { "CATHERBY", 13, 31, 1, "THAS_LODESTONE_MAP__CATHERBY", "THAS_ACTIVE_CATHERBY" },
+  { "CITY_OF_UM", 35, 53270, 1, "THAS_LODESTONE_MAP__CITYOFUM", "THAS_ACTIVE_CITYOFUM" },
+  { "DRAYNOR_VILLAGE", 14, 32, 1, "THAS_LODESTONE_MAP__DRAYNOR", "THAS_ACTIVE_DRAYNOR" },
+  { "EAGLES_PEAK", 27, 18524, 1, "THAS_LODESTONE_MAP__EAGLES", "THAS_ACTIVE_EAGLES" },
+  { "EDGEVILLE", 15, 33, 1, "THAS_LODESTONE_MAP__EDGEVILLE", "THAS_ACTIVE_EDGEVILLE" },
+  { "FALADOR", 16, 34, 1, "THAS_LODESTONE_MAP__FALADOR", "THAS_ACTIVE_FALADOR" },
+  { "FORT_FORINTHRY", 22, 52518, 1, "THAS_LODESTONE_MAP__FORT", "PLAYER_FORT_LODESTONE" },
+  { "FREMENNIK_PROVINCE", 28, 18525, 1, "THAS_LODESTONE_MAP__FREMENNIK", "THAS_ACTIVE_FREMENNIK" },
+  { "KARAMJA", 29, 18526, 1, "THAS_LODESTONE_MAP__KARAMJA", "THAS_ACTIVE_KARAMJA" },
+  { "LUMBRIDGE", 17, 35, 1, "THAS_LODESTONE_MAP__LUMBRIDGE", "THAS_ACTIVE_LUMBRIDGE" },
+  { "LUNAR_ISLE", 9, 10236, 100, "THAS_LODESTONE_MAP__LUNAR", "LUNAR_QUEST_MAIN" },
+  { "MENAPHOS", 23, 36173, 1, "THAS_LODESTONE_MAP__MENAPHOS", "THAS_ACTIVE_MENAPHOS" },
+  { "OOGLOG", 30, 18527, 1, "THAS_LODESTONE_MAP__OOGLOG", "THAS_ACTIVE_OOGLOG" },
+  { "PORT_SARIM", 18, 36, 1, "THAS_LODESTONE_MAP__PORT_SARIM", "THAS_ACTIVE_PORT_SARIM" },
+  { "PRIFDDINAS", 34, 24967, 1, "THAS_LODESTONE_MAP__PRIFDDINAS", "THAS_ACTIVE_PRIFDDINAS" },
+  { "SEERS_VILLAGE", 19, 37, 1, "THAS_LODESTONE_MAP__SEERS", "THAS_ACTIVE_SEERS" },
+  { "TAVERLEY", 20, 38, 1, "THAS_LODESTONE_MAP__TAVERLEY", "THAS_ACTIVE_TAVERLEY" },
+  { "TIRANNWN", 31, 18528, 1, "THAS_LODESTONE_MAP__TIRRANWN", "THAS_ACTIVE_TIRRANWN" },
+  { "VARROCK", 21, 39, 1, "THAS_LODESTONE_MAP__VARROCK", "THAS_ACTIVE_VARROCK" },
+  { "WENDLEWICK", 41, 60739, 1, "THAS_LODESTONE_MAP__WENDLEWICK", "THAS_ACTIVE_WENDLEWICK" },
+  { "WILDERNESS_CRATER", 32, 18529, 1, "THAS_LODESTONE_MAP__WILDERNESS", "THAS_ACTIVE_WILDERNESS" },
+  { "YANILLE", 25, 40, 1, "THAS_LODESTONE_MAP__YANILLE", "THAS_ACTIVE_YANILLE" },
 }
 
 Lodestones.ALL = {}
 Lodestones.ORDER = {}
 for i, r in ipairs(ROWS) do
-  local row = { key = r[1], button = r[2], varbit = r[3], at_least = r[4] }
+  -- button / varbit are the fallback ids; button_ref / varbit_ref resolve the gameval names.
+  local row = { key = r[1], button = r[2], varbit = r[3], at_least = r[4],
+                button_ref = G.component_ref(r[5], Lodestones.NETWORK_INTERFACE, r[2]),
+                varbit_ref = G.ref("varbit", r[6], r[3]) }
   Lodestones.ALL[r[1]] = row
   Lodestones.ORDER[i] = row
 end
@@ -101,7 +108,7 @@ end
 
 function Lodestones:is_unlocked(l)
   local row = Lodestones.lodestone(l)
-  return self._game:varbit(row.varbit) >= row.at_least
+  return self._game:varbit(row.varbit_ref:id()) >= row.at_least
 end
 
 -- The unlocked lodestones, in order.
@@ -113,14 +120,16 @@ function Lodestones:unlocked()
   return out
 end
 
-function Lodestones:is_open() return self._game:is_interface_open(Lodestones.NETWORK_INTERFACE) end
+function Lodestones:is_open() return self._game:is_interface_open(NETWORK_REF:id()) end
 
 -- Press the home button op `pick(ops)` chooses; false (nothing sent) when it picks none.
 function Lodestones:_press_home(pick)
-  local reply = self._game:component_ops(MINIMAP, HOME_BUTTON, -1)
+  local minimap, home = HOME_REF:component()
+  local reply = self._game:component_ops(minimap, home, -1)
   local op = reply and pick(reply.ops or {})
   if op == nil then return false end
-  self._game:do_action(Actions.component_click(MINIMAP, HOME_BUTTON, op, -1))
+  local minimap, home = HOME_REF:component()
+  self._game:do_action(Actions.component_click(minimap, home, op, -1))
   return true
 end
 
@@ -178,7 +187,8 @@ function Lodestones:teleport(l, timeout_ms)
   if start == nil then return Lodestones.NOT_IN_GAME end
   if not self:is_unlocked(row) then return Lodestones.LOCKED end
   if not self:_ensure_open() then return Lodestones.NETWORK_UNAVAILABLE end
-  self._game:do_action(Actions.component_click(Lodestones.NETWORK_INTERFACE, row.button, OP_TELEPORT, -1))
+  local iface, button = row.button_ref:component()
+  self._game:do_action(Actions.component_click(iface, button, OP_TELEPORT, -1))
   return self:_await_arrival(start, timeout_ms or Lodestones.ARRIVAL_TIMEOUT_MS)
 end
 

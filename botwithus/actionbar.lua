@@ -12,7 +12,9 @@
 -- SLOTS. A slot is { slot, kind, ... }: kind "empty", "ability" (with .ability), "item" (with
 -- .item_id) or "unresolved" (with .type_code and .id: an ability the cache lookup did not find).
 -- They are read from the varbits ACTIONBAR<bar>_INT<slot>_TYPE / _ID and the varp
--- ACTIONBAR<bar>_OBJ<slot>; a slot holding an item wins over its ability bits.
+-- ACTIONBAR<bar>_OBJ<slot>; a slot holding an item wins over its ability bits. Their ids are
+-- resolved by those gameval names (host ABI 8), all of one bar or none, as the Java host does;
+-- when a name does not resolve the bar uses the generated table below, with one warning.
 --
 -- ABILITIES come from the cache: enum COMBATV2_TYPE_TO_ENUM (13199) maps a slot's type code to
 -- that style's ability enum, which maps the ability id to its struct (params 2793 id, 2794 name,
@@ -30,6 +32,7 @@
 
 local Definitions = require("botwithus.definitions")
 local Actions = require("botwithus.actions")
+local G = require("botwithus.gameval")
 
 local ActionBar = {}
 ActionBar.__index = ActionBar
@@ -39,10 +42,12 @@ ActionBar.MAX_BAR = 18
 ActionBar.SCRIPT_COOLDOWN_STRUCT = 8247
 ActionBar.SCRIPT_COOLDOWN_WINDOW = 6506
 ActionBar.COMBAT_BAR = 1430
-local CURRENT_BAR = 1893            -- varbit COMBATV2_ACTIONBAR_CURRENT_BAR
-local GLOBAL_COOLDOWN_START = 2091  -- varc COMBATV2_GLOBAL_COOLDOWN_START_CLIENT
-local GLOBAL_COOLDOWN_END = 2092    -- varc COMBATV2_GLOBAL_COOLDOWN_END_CLIENT
-local TYPE_TO_ENUM = 13199          -- enum COMBATV2_TYPE_TO_ENUM
+-- By gameval name (host ABI 8); the number is the fallback when the name does not resolve.
+local CURRENT_BAR = G.ref("varbit", "COMBATV2_ACTIONBAR_CURRENT_BAR", 1893)
+local GLOBAL_COOLDOWN_START = G.ref("var_client", "COMBATV2_GLOBAL_COOLDOWN_START_CLIENT", 2091)
+local GLOBAL_COOLDOWN_END = G.ref("var_client", "COMBATV2_GLOBAL_COOLDOWN_END_CLIENT", 2092)
+local TYPE_TO_ENUM = G.ref("enum", "COMBATV2_TYPE_TO_ENUM", 13199)
+local SLOT_BUTTON_PREFIX = "TOPLEVEL_V2_COMBAT_BAR__GRAPHIC_"
 local OP_ACTIVATE = 1
 local EMPTY_TYPE = 0
 
@@ -53,7 +58,7 @@ ActionBar.PARAM_COOLDOWN = 2796
 ActionBar.PARAM_GLOBAL_COOLDOWN = 9405
 ActionBar.DEFAULT_GLOBAL_COOLDOWN_TICKS = 3
 
--- Generated from gameval.sqlite (meta built 2026-10-23, source: the live 951 cache):
+-- The fallback ids, generated from gameval.sqlite (meta built 2026-10-23, the live 951 cache):
 -- ACTIONBAR<bar>_INT<slot>_TYPE / _ID (varbits) and ACTIONBAR<bar>_OBJ<slot> (varps), slot 1..14.
 local SLOT_VARS = {
   [1] = {
@@ -207,7 +212,7 @@ end
 -- call can still resolve).
 function Catalog:type_to_enum()
   if self._type_to_enum then return self._type_to_enum end
-  local e = self:_enum(TYPE_TO_ENUM)
+  local e = self:_enum(TYPE_TO_ENUM:id())
   if e == nil then return {} end
   self._type_to_enum = e.entries
   return e.entries
@@ -258,14 +263,41 @@ ActionBar.Catalog = Catalog
 -- The bar --------------------------------------------------------------------------------------
 
 function ActionBar.new(game, catalog)
-  return setmetatable({ _game = game, _catalog = catalog or ActionBar.new_catalog() }, ActionBar)
+  return setmetatable({ _game = game, _catalog = catalog or ActionBar.new_catalog(), _vars = {} },
+                      ActionBar)
+end
+
+local warned_bars = {}
+
+-- Bar `bar`'s { type, id, obj } id lists by gameval name: every name of the bar, or the generated
+-- table (one warning per bar). A fallback is not kept, so the names are asked again next time.
+function ActionBar:_vars_of(bar)
+  if self._vars[bar] then return self._vars[bar] end
+  local named = { type = {}, id = {}, obj = {} }
+  for slot = 1, ActionBar.SLOTS do
+    local base = ("ACTIONBAR%d_INT%d"):format(bar, slot)
+    local t, why = G.id("varbit", base .. "_TYPE")
+    local i = G.id("varbit", base .. "_ID")
+    local o = G.id("varp", ("ACTIONBAR%d_OBJ%d"):format(bar, slot))
+    if t == nil or i == nil or o == nil then
+      if not warned_bars[bar] then
+        warned_bars[bar] = true
+        io.stderr:write(("[botwithus.actionbar] bar %d slot variables did not resolve by name (%s); "
+          .. "using the generated ids\n"):format(bar, tostring(why or "not_found")))
+      end
+      return SLOT_VARS[bar]
+    end
+    named.type[slot], named.id[slot], named.obj[slot] = t, i, o
+  end
+  self._vars[bar] = named
+  return named
 end
 
 function ActionBar:catalog() return self._catalog end
 
 -- The active bar, 1..18, or -1 when the varbit reads anything else.
 function ActionBar:active_bar()
-  local bar = self._game:varbit(CURRENT_BAR)
+  local bar = self._game:varbit(CURRENT_BAR:id())
   return (bar >= 1 and bar <= ActionBar.MAX_BAR) and bar or -1
 end
 
@@ -280,8 +312,8 @@ end
 -- The 14 slots of bar `bar` (1..18), or {} outside that range. One varbit read and one varp
 -- read for the whole bar.
 function ActionBar:slots_of(bar)
-  local vars = SLOT_VARS[bar]
-  if vars == nil then return {} end
+  if SLOT_VARS[bar] == nil then return {} end
+  local vars = self:_vars_of(bar)
   local ids = {}
   for i = 1, ActionBar.SLOTS do
     ids[2 * i - 1], ids[2 * i] = vars.type[i], vars.id[i]
@@ -318,7 +350,8 @@ function ActionBar:contains_ability(name) return self:find_ability(name) ~= nil 
 function ActionBar:use_slot(n)
   local comp = SLOT_BUTTONS[n]
   if comp == nil then return false end
-  self._game:do_action(Actions.component_click(ActionBar.COMBAT_BAR, comp, OP_ACTIVATE, -1))
+  local iface, button = G.component_ref(SLOT_BUTTON_PREFIX .. n, ActionBar.COMBAT_BAR, comp):component()
+  self._game:do_action(Actions.component_click(iface, button, OP_ACTIVATE, -1))
   return true
 end
 
@@ -329,8 +362,8 @@ function ActionBar:use_ability(name)
 end
 
 function ActionBar:global_cooldown()
-  return Cooldown.of(self._game:varc_int(GLOBAL_COOLDOWN_START),
-                     self._game:varc_int(GLOBAL_COOLDOWN_END))
+  return Cooldown.of(self._game:varc_int(GLOBAL_COOLDOWN_START:id()),
+                     self._game:varc_int(GLOBAL_COOLDOWN_END:id()))
 end
 
 -- One int-returning client script run: its returns, or nil when any step fails. The handle is

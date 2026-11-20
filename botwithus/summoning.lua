@@ -17,6 +17,7 @@ local Definitions = require("botwithus.definitions")
 local Actions = require("botwithus.actions")
 local Inventory = require("botwithus.inventory")
 local Skills = require("botwithus.skills")
+local G = require("botwithus.gameval")
 
 local Summoning = {}
 Summoning.__index = Summoning
@@ -25,17 +26,16 @@ local TENTHS = 10
 local POINTS_PER_LEVEL = 10
 local NO_POUCH = 0
 local OP_PRESS = 1
-local POINTS = 41524          -- varbit LORE_POINTS (tenths)
-local POUCH = 1831            -- varp FOLLOWER_OBJ
-local MINUTES_LEFT = 6055     -- varbit LORE_FULL_TIMER
-local SPECIAL_POINTS = 1787   -- varp LORE_SPELL_POINTS
-local SCROLLS_STORED = 25412  -- varbit COMBATV2_SUMMONING_SCROLLCOUNT
-local COMBAT_BAR = 1430
-local CALL_BUTTON = 50        -- TOPLEVEL_V2_COMBAT_BAR__CALL_OP1
-local DISMISS_BUTTON = 51     -- TOPLEVEL_V2_COMBAT_BAR__DISMISS_OP1
-local INTERACT_BUTTON = 44    -- TOPLEVEL_V2_COMBAT_BAR__INTERACT_OP1
-local FAMILIAR_SIDE = 662     -- LORE_STATS_SIDE
-local SPECIAL_BUTTON = 38     -- LORE_STATS_SIDE__LORE_SPELL_BUTTON_GRAPHIC_1
+-- By gameval name (host ABI 8); the number is the fallback when the name does not resolve.
+local POINTS = G.ref("varbit", "LORE_POINTS", 41524)            -- tenths
+local POUCH = G.ref("varp", "FOLLOWER_OBJ", 1831)
+local MINUTES_LEFT = G.ref("varbit", "LORE_FULL_TIMER", 6055)
+local SPECIAL_POINTS = G.ref("varp", "LORE_SPELL_POINTS", 1787)
+local SCROLLS_STORED = G.ref("varbit", "COMBATV2_SUMMONING_SCROLLCOUNT", 25412)
+local CALL_BUTTON = G.component_ref("TOPLEVEL_V2_COMBAT_BAR__CALL_OP1", 1430, 50)
+local DISMISS_BUTTON = G.component_ref("TOPLEVEL_V2_COMBAT_BAR__DISMISS_OP1", 1430, 51)
+local INTERACT_BUTTON = G.component_ref("TOPLEVEL_V2_COMBAT_BAR__INTERACT_OP1", 1430, 44)
+local SPECIAL_BUTTON = G.component_ref("LORE_STATS_SIDE__LORE_SPELL_BUTTON_GRAPHIC_1", 662, 38)
 
 Summoning.PARAM_FOLLOWER_NPC = 74
 Summoning.PARAM_LEVEL_REQUIRED = 394
@@ -43,7 +43,7 @@ Summoning.PARAM_COST = 396
 
 function Summoning.new(game) return setmetatable({ _game = game }, Summoning) end
 
-function Summoning:raw_points() return self._game:varbit(POINTS) end
+function Summoning:raw_points() return self._game:varbit(POINTS:id()) end
 
 function Summoning:points()
   local raw = self:raw_points()
@@ -58,7 +58,7 @@ function Summoning:max_points()
 end
 
 -- The summoned familiar's pouch item id, 0 for none.
-function Summoning:pouch_id() return math.max(self._game:varp(POUCH), NO_POUCH) end
+function Summoning:pouch_id() return math.max(self._game:varp(POUCH:id()), NO_POUCH) end
 function Summoning:has_familiar() return self:pouch_id() > NO_POUCH end
 
 -- The familiar from its pouch's params: { pouch_item_id, pouch_name, npc_id, level_required,
@@ -77,9 +77,9 @@ function Summoning:familiar()
            summoning_cost = params[Summoning.PARAM_COST] or -1 }
 end
 
-function Summoning:minutes_remaining() return math.max(0, self._game:varbit(MINUTES_LEFT)) end
-function Summoning:special_move_points() return self._game:varp(SPECIAL_POINTS) end
-function Summoning:scrolls_stored() return math.max(0, self._game:varbit(SCROLLS_STORED)) end
+function Summoning:minutes_remaining() return math.max(0, self._game:varbit(MINUTES_LEFT:id())) end
+function Summoning:special_move_points() return self._game:varp(SPECIAL_POINTS:id()) end
+function Summoning:scrolls_stored() return math.max(0, self._game:varbit(SCROLLS_STORED:id())) end
 
 -- The beast-of-burden inventory view (530); not present without a beast of burden.
 function Summoning:beast_of_burden() return self._game:inventory(Inventory.FAMILIAR) end
@@ -90,9 +90,9 @@ function Summoning:_press(iface, comp)
   return true
 end
 
-function Summoning:call() return self:_press(COMBAT_BAR, CALL_BUTTON) end
-function Summoning:dismiss() return self:_press(COMBAT_BAR, DISMISS_BUTTON) end
-function Summoning:interact() return self:_press(COMBAT_BAR, INTERACT_BUTTON) end
-function Summoning:cast_special() return self:_press(FAMILIAR_SIDE, SPECIAL_BUTTON) end
+function Summoning:call() return self:_press(CALL_BUTTON:component()) end
+function Summoning:dismiss() return self:_press(DISMISS_BUTTON:component()) end
+function Summoning:interact() return self:_press(INTERACT_BUTTON:component()) end
+function Summoning:cast_special() return self:_press(SPECIAL_BUTTON:component()) end
 
 return Summoning
