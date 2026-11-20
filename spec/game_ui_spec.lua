@@ -219,8 +219,8 @@ T["ui: the agent's refusals raise verbatim, with kind refused"] = function(asser
   assert_(tostring(err) == "botwithus.ui: ui.set refused: " .. fake_bwu.UI_FORBIDDEN, "prints")
   err = raised(assert_, area.SetPos, area, 1, 1)
   assert_(err.message == fake_bwu.UI_READ_ONLY, "a Jagex component is read-only")
-  err = raised(assert_, ui.Button.new, area)
-  assert_(err.message == "ui type not supported yet: button", "a later type: the agent's text")
+  err = raised(assert_, ui.Sprite.new, area)
+  assert_(err.message == "ui type not supported yet: sprite", "a later type: the agent's text")
   err = raised(assert_, function() layer.hidden = true end)
   assert_(err.message == "ui prop not supported yet: hidden", "hidden: the agent's text")
   err = raised(assert_, ui.Layer.new, area, 0)
@@ -243,7 +243,7 @@ T["ui: canvas text and sprites, Vector4 colours and other hooks are unsupported 
     function() c:AddText(0, 0, "x", 1, 0xFF) end,
     function() c:AddSprite(0, 0, 1, 1, 1, 0xFF) end,
     function() c:AddRectangle(0, 0, 1, 1, { 1, 0, 0, 1 }) end,
-    function() c:Subscribe(ui.Hook.ONCLICK, function() end) end,
+    function() c:Subscribe(ui.Hook.ONDRAG, function() end) end,
     function() ui.Interfaces:GetInterface(1477) end,
   }) do
     local err = raised(assert_, fn)
@@ -639,7 +639,7 @@ T["ui: visibleGlobal and isRestricted use Jagex's names; local visible is unsupp
   assert_(err.kind == "unsupported", "visible (local) has no wire form yet")
 end
 
-T["ui: ui.Hook lists every Jagex hook; Subscribe raises for any but DESTROYED"] = function(assert_)
+T["ui: ui.Hook lists every Jagex hook; Subscribe raises for one the wire does not deliver"] = function(assert_)
   local _, _, ui = setup()
   for _, name in ipairs({ "ONCLICK", "ONSWIPEVERTICAL", "ONCUTSCENEFINISHED", "ONTARGETLEAVE",
                           "ONVARPTRANSMIT", "ONCAMERAUPDATETRANSMIT", "ONDIALOGABORT",
