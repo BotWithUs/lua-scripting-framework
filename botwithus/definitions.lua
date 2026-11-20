@@ -14,6 +14,8 @@
 -- A missing id is nil. No cache, or an NXTCache.dll older than these reads, raises with the
 -- host's reason; so does a bwu_host older than ABI 7.
 
+local Json = require("botwithus.json")
+
 local M = {}
 
 -- bwu_host_surface.h BWU_CACHE_*: the type ids json / params take.
@@ -76,6 +78,36 @@ end
 
 -- The whole definition as NXTCache's JSON text, or nil for a missing id.
 function M.json(cache_type, id) return read("cache_json", cache_type, id) end
+
+-- An enum, decoded: { id, entries = { [key] = value }, input_type_id, output_type_id, ... } with
+-- whole-number keys as integers, or nil for a missing id.
+function M.enum(id)
+  local text = M.json(M.CACHE_ENUM, id)
+  if text == nil then return nil end
+  local e = Json.decode(text)
+  e.entries = Json.int_keys(e.entries)
+  return e
+end
+
+-- The params of a definition as one table: { [param_id] = int value or string }, or nil for a
+-- missing id. A struct is read this way (CACHE_STRUCT).
+function M.param_map(cache_type, id)
+  local rows = M.params(cache_type, id)
+  if rows == nil then return nil end
+  local out = {}
+  for _, p in ipairs(rows) do
+    if p.kind == M.PARAM_INT then out[p.param_id] = p.value else out[p.param_id] = p.text end
+  end
+  return out
+end
+
+-- A quest definition, decoded from the cache's JSON (name, listName, membersOnly, progressVarps,
+-- progressVarbits, skillRequirements, dependentQuestIds, ...), or nil for a missing id.
+function M.quest(id)
+  local text = M.json(M.CACHE_QUEST, id)
+  if text == nil then return nil end
+  return Json.decode(text)
+end
 
 -- Item names kept on this side: by-name matching asks for the same ids every loop. The surface
 -- they came from is remembered, so a different `bwu` (another test, a re-install) starts over.

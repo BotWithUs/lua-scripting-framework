@@ -23,6 +23,46 @@
   - Tests: `spec/game_ui_p2_spec.lua` (fake agent P2 rules; `ui_p1 = true` plays an older host);
     live: `tests/live/ui_smoke_p2.lua`.
 
+- **The Java host's composition APIs (J1-J3), ported to Lua.** Built only on what the frontend
+  already binds (host ABI 7; wire v25 unchanged). Names follow the Java host's, in snake_case.
+  - Condition waits (`botwithus.timing`, and `ctx:delay_until` / `:delay_while` /
+    `:delay_until_ticks` / `:delay_ticks`): each returns whether its condition was met, ends within
+    one poll of a stop or the client exiting, counts `server_tick` only, gives up on a stalled tick,
+    and holds while the run is paused.
+  - Pause and settings: `ctx:pause()` / `:resume()` / `:is_paused()` (no `on_loop` runs while
+    paused; a plugin-UI or client-event handler resumes) and `ctx.settings` (read through
+    `ctx.config`, kept across a config change; not persisted: the host has no settings store yet).
+  - `botwithus.area` (rectangle, circle, polygon; `contains`, `random_tile`,
+    `random_reachable_tile`) and `Tile` region helpers (`bot.Coordinate` is `Tile`).
+  - Items by WHOLE name, pattern, category and option (`botwithus.match`), inventory
+    `find_exact`, `contains_all_of` / `_any_of` / `_any_except`, `items_with_option`, and clicks:
+    `interact(target, option)` through the live menu, `use(target)`. `botwithus.bank`: open (booth,
+    chest or banker), deposit / withdraw by id, name or pattern, `deposit_all_except`, presets,
+    `load_last_preset`, withdraw / transfer modes.
+  - `botwithus.xp` (skill display names, the standard and elite xp tables, `XpTracker`) and
+    `botwithus.timers` (Stopwatch, Timer, Durations).
+  - Entity query filters: animation, stance, spot anim, moving, combat level, health and health
+    percent, option, `named_any_of`, `name_matching`, `with_ids`, `inside` / `outside` an area,
+    `reachable`, `within_distance`, and `last`, `random`, `nearest_to`; `botwithus.interact` clicks
+    an NPC, object or ground item by option name.
+  - `botwithus.actionbar` (slots from the bar vars, abilities from the cache, cooldowns joined
+    through client scripts 8247 then 6506, UNKNOWN when they fail), `botwithus.prayers`,
+    `botwithus.combat` (local combat state and a hitmark history), `botwithus.changes`
+    (inventory and skill change events derived per server tick), `botwithus.summoning` (beast of
+    burden inventory 530), `botwithus.lodestones` (with the settle wait and one open retry).
+  - `botwithus.component_query` (queries over a live component tree; option clicks with the
+    node's own sub), `botwithus.dialog` (chat page text and title across 1184 / 1191 / 1186 /
+    1189, multi-choice options, the destroy confirmation), `botwithus.quests` (status at or above
+    the start value, stubs read as their listed quest, unmet requirements),
+    `botwithus.deposit_box`, `botwithus.loot`, `botwithus.buffs`, `botwithus.hud` (tabs through
+    RIBBON_WINDOWS and the button's own Open / Close) and `game:logout()` /
+    `game:exit_to_lobby()`.
+  - `botwithus.definitions` gains `enum`, `param_map` and `quest`; `botwithus.json` decodes the
+    cache's JSON. Gameval names are pinned as ids (the native host has no gameval index), each with
+    its name beside it.
+  - Tests: `spec/l2_j1_spec.lua`, `spec/l2_j2_spec.lua`, `spec/l2_j3_spec.lua`; the fake surface
+    takes extra cache rows and client-script results. Live: `tests/live/l2_smoke.lua`.
+
 - **Host ABI 7: cache definitions, world map elements, avoid areas and route links (needs a native
   host at `BWU_ABI_VERSION` 7; wire v25 unchanged).** On an older host each raises naming ABI 7.
   - `botwithus.definitions` (`bot.Definitions`): `item` / `npc` / `loc` (names, ops, stackable,
