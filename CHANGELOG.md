@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- **Host ABI 5 reads (needs a native host at `BWU_ABI_VERSION` 5; wire v25 unchanged).**
+  - `game:backpack()` / `:equipment()` / `:bank()` / `:inventory(id)` return a
+    `botwithus.inventory` view, with `count`, `contains`, `find`, `free_slots` and the rest. A
+    closed bank is `:is_present() == false`, never an empty bank.
+  - `game:skills()` / `:skill("mining")`, with names from `botwithus.skills`.
+  - `game:ground_items()` (and the `bot.ground_items(game)` query) and `game:projectiles()`.
+  - `game:game_state()` / `:is_logged_in()`, and `:login_state()` / `:current_world()` /
+    `:account_info()`.
+  - The component reads: `game:component()`, `:components()`, `:component_ops()`,
+    `:static_children()`, `:dynamic_children()`, `:interface_tree()` and `:component_at()`,
+    through the new `game:rpc_raw(method, params)`. Also new: `game:snapshot_bytes()`.
+
+  Self, NPC and player rows carry the new host fields (`is_member`, `target_index`, `moving`,
+  `hp` / `max_hp`, and others). On an older host every new read raises, naming the ABI it needs.
+- **`Game:poll_events()` decodes eight more event types**: `varp_change` (10),
+  `varbit_change` (11), `varc_change` (12), `obj_var_change` (13), `chat_message` (20),
+  `hitmark` (70), `headbar` (71) and `spot_anim` (72). A body too short for its fields, or a chat
+  body whose lengths run past it, comes back raw with `error` set, as before.
+
 - **Plugin UI: `botwithus.game_ui`, shaped like Jagex's `ui.*` plugin API.** `game:ui()`,
   `ctx.ui` or `bot.ui(game)` returns a namespace with `Canvas`, `Rectangle`, `Line`, `Text`
   and `Layer` (`.new(parent, categoryID?, dynamicID?)`), `Interfaces:GetComponent`, the

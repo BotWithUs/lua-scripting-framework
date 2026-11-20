@@ -14,9 +14,21 @@
 local Events = {}
 
 -- Event type discriminators (the agent's numbering; permanent).
+Events.VARP_CHANGE     = 10
+Events.VARBIT_CHANGE   = 11
+Events.VARC_CHANGE     = 12
+Events.OBJ_VAR_CHANGE  = 13
+Events.CHAT_MESSAGE    = 20
 Events.KEY_INPUT       = 30
 Events.ACTION_EXECUTED = 40
 Events.ACTION_REFUSED  = 41
+Events.HITMARK         = 70
+Events.HEADBAR         = 71
+Events.SPOT_ANIM       = 72
+
+-- target_type in hitmark / headbar / spot_anim: the entity the event is on.
+Events.TARGET_PLAYER = 0
+Events.TARGET_NPC    = 1
 
 -- Why a queued action was refused. No action_executed follows a refusal.
 Events.REASON_NO_TARGET      = 1  -- the target does not exist, or the action has none to click
@@ -112,7 +124,83 @@ local function decode_key_input(rec)
   }
 end
 
+-- Var changes. VarChangeBody / VarbitChangeBody: int32 id, oldValue, newValue (12 bytes). A
+-- varc change reuses the varp shape with a varc id.
+local VAR_CHANGE_SIZE = 12
+
+local function decode_var(rec, name)
+  local id, old, new = string.unpack("<i4i4i4", rec.body)
+  return { type = rec.type, name = name, id = id, old_value = old, new_value = new }
+end
+
+-- ObjVarChangeBody: int32 invId, slot, varId, oldValue, newValue (20 bytes). A per-item var
+-- on one inventory slot changed. No sibling framework decodes this one yet.
+local OBJ_VAR_CHANGE_SIZE = 20
+
+local function decode_obj_var(rec)
+  local inv_id, slot, var_id, old, new = string.unpack("<i4i4i4i4i4", rec.body)
+  return { type = rec.type, name = "obj_var_change", inv_id = inv_id, slot = slot,
+           var_id = var_id, old_value = old, new_value = new }
+end
+
+-- ChatMessageBody: int32 msgType, uint16 senderLen, uint16 textLen, then the sender's bytes
+-- immediately followed by the text's. The header is 8 bytes; a body whose lengths run past its
+-- end is refused rather than read short.
+local CHAT_HEADER_SIZE = 8
+
+local function decode_chat(rec)
+  local msg_type, sender_len, text_len = string.unpack("<i4I2I2", rec.body)
+  local first = CHAT_HEADER_SIZE + 1
+  if CHAT_HEADER_SIZE + sender_len + text_len > #rec.body then
+    return { type = rec.type, body = rec.body, error = ("botwithus: chat_message event says %d"
+      .. " + %d text bytes, but its body has %d after the header"):format(sender_len, text_len,
+      #rec.body - CHAT_HEADER_SIZE) }
+  end
+  return { type = rec.type, name = "chat_message", msg_type = msg_type,
+           sender = rec.body:sub(first, first + sender_len - 1),
+           text = rec.body:sub(first + sender_len, first + sender_len + text_len - 1) }
+end
+
+-- Combat and scene events share a head: int32 targetServerIndex, int8 targetType, 3 pad bytes.
+-- target_type is Events.TARGET_PLAYER (0) or TARGET_NPC (1).
+local TARGET_HEAD = "<i4i1xxx"
+local HITMARK_SIZE   = 20   -- head, int32 hitmarkType, damage, cycle (game_cycle units)
+local HEADBAR_SIZE   = 16   -- head, int32 headbarType, value
+local SPOT_ANIM_SIZE = 17   -- head, int32 spotAnimId, int16 tileX, tileY, int8 plane (+3 pad)
+
+local function decode_hitmark(rec)
+  local idx, ttype, hm_type, damage, cycle = string.unpack(TARGET_HEAD .. "i4i4i4", rec.body)
+  return { type = rec.type, name = "hitmark", target_index = idx, target_type = ttype,
+           hitmark_type = hm_type, damage = damage, cycle = cycle }
+end
+
+local function decode_headbar(rec)
+  local idx, ttype, hb_type, value = string.unpack(TARGET_HEAD .. "i4i4", rec.body)
+  return { type = rec.type, name = "headbar", target_index = idx, target_type = ttype,
+           headbar_type = hb_type, value = value }
+end
+
+-- target_index is -1 for a spot anim on the world; then tile says where. On an entity, tile is
+-- whatever the agent wrote and means nothing.
+local function decode_spot_anim(rec)
+  local idx, ttype, id, x, y, plane = string.unpack(TARGET_HEAD .. "i4i2i2i1", rec.body)
+  return { type = rec.type, name = "spot_anim", target_index = idx, target_type = ttype,
+           spot_anim_id = id, tile = { x = x, y = y, plane = plane } }
+end
+
 local DECODERS = {
+  [Events.VARP_CHANGE]     = { name = "varp_change", size = VAR_CHANGE_SIZE,
+                               fn = function(rec) return decode_var(rec, "varp_change") end },
+  [Events.VARBIT_CHANGE]   = { name = "varbit_change", size = VAR_CHANGE_SIZE,
+                               fn = function(rec) return decode_var(rec, "varbit_change") end },
+  [Events.VARC_CHANGE]     = { name = "varc_change", size = VAR_CHANGE_SIZE,
+                               fn = function(rec) return decode_var(rec, "varc_change") end },
+  [Events.OBJ_VAR_CHANGE]  = { name = "obj_var_change", size = OBJ_VAR_CHANGE_SIZE,
+                               fn = decode_obj_var },
+  [Events.CHAT_MESSAGE]    = { name = "chat_message", size = CHAT_HEADER_SIZE, fn = decode_chat },
+  [Events.HITMARK]         = { name = "hitmark", size = HITMARK_SIZE, fn = decode_hitmark },
+  [Events.HEADBAR]         = { name = "headbar", size = HEADBAR_SIZE, fn = decode_headbar },
+  [Events.SPOT_ANIM]       = { name = "spot_anim", size = SPOT_ANIM_SIZE, fn = decode_spot_anim },
   [Events.KEY_INPUT]       = { name = "key_input", size = Events.KEY_INPUT_SIZE,
                                fn = decode_key_input },
   [Events.ACTION_EXECUTED] = { name = "action_executed", size = ACTION_EXECUTED_SIZE,
@@ -122,6 +210,13 @@ local DECODERS = {
 }
 
 -- Decode one { type, body } record. Never raises. A known type comes back as a named table:
+--   varp_change / varbit_change / varc_change   { type, name, id, old_value, new_value }
+--   obj_var_change   { type, name, inv_id, slot, var_id, old_value, new_value }
+--   chat_message     { type, name, msg_type, sender, text } (sender and text as the bytes
+--                      the game sent; msg_type is the game's own chat type)
+--   hitmark          { type, name, target_index, target_type, hitmark_type, damage, cycle }
+--   headbar          { type, name, target_index, target_type, headbar_type, value }
+--   spot_anim        { type, name, target_index, target_type, spot_anim_id, tile }
 --   key_input        { type, name, key, is_alt, is_ctrl, is_shift, synthetic,
 --                      text_input_focused, is_repeat }
 --   action_executed  { type, name, action_id, param1, param2, param3 }

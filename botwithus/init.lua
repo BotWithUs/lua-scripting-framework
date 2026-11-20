@@ -24,6 +24,11 @@ M.clients  = require("botwithus.clients")
 M.Variables = require("botwithus.variables")
 -- Walk progress constants and helpers (Game:walk_ex / :walk_start ...): see botwithus/walk.lua.
 M.walk     = require("botwithus.walk")
+-- Host ABI 5 reads: inventory views (game:backpack() ...), skill names (game:skill("mining")),
+-- and component reads (game:component(...)). See each module.
+M.Inventory  = require("botwithus.inventory")
+M.Skills     = require("botwithus.skills")
+M.Components = require("botwithus.components")
 
 -- Plugin UI: native game components shaped like Jagex's `ui.*` (see botwithus/game_ui.lua).
 -- Reached per Game: `local ui = game:ui()` (or ctx.ui in bot.run), then ui.Canvas.new(...).
@@ -45,6 +50,7 @@ M.npcs    = M.Entities.npcs
 M.players = M.Entities.players
 M.objects = M.Entities.objects
 M.hint_arrows = M.Entities.hint_arrows
+M.ground_items = M.Entities.ground_items
 
 -- The agent protocol this framework is written for; Game.attach refuses any other.
 M.PROTOCOL_VERSION = M.Game.PROTOCOL_VERSION
