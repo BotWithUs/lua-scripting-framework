@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **Host ABI 6 calls (needs a native host at `BWU_ABI_VERSION` 6; wire v25 unchanged; the agent
+  RPCs of NXTLibrary 0f746b4).** On an older host each raises naming ABI 6;
+  `game:has_abi6_calls()` tells.
+  - `game:ge_offers()`: the eight GE slots of market 0, each with `in_use` (`stage ~= 0`) and
+    `is_sell` (`botwithus.grand_exchange`).
+  - `game:world_list()`: rows with `members`, `skill_total`, `classic_only`, `eoc_only` decoded
+    and `flags` raw; `is_fetched` is false for the empty list the client holds before the game
+    fetched it, which is not an error (`botwithus.worlds`, `Worlds.find`).
+  - `game:set_world(id)` and `game:hop_world(id[, timeout_ms = 30000])`: waits until the client
+    reports the world with its state back at 20 or 30; nil, code, detail on a refusal or timeout.
+  - `game:target_mode()`, and use-on (`botwithus.target`): `:use_on_component(src, dst)`,
+    `:use_on_npc(src, index)`, `:use_on_object(src, loc, x, y)`, and the backpack forms
+    `:use_item_on_item(slot, slot)` / `:use_item_on_npc` / `:use_item_on_object`. The host arms
+    with 25, waits for target mode armed from that source, then fires 58, 8 or 2; the agent
+    clears target mode after. Ground items, players and tiles are not bound (packing not
+    documented).
+  - `game:world_to_screen(tiles)`: 1..64 tiles to window pixels; `on_screen` per point.
+  - `game:static_children_with_sub` / `:dynamic_children_with_sub`: `{comp, sub}` rows. Use
+    these instead of the count-only `:dynamic_children`.
+  - `game:script_handle` / `:execute_script(handle, ints, strings, returns)` /
+    `:destroy_script_handle`, with string arguments (16 args together, 255 bytes each).
 - **Host ABI 5 reads (needs a native host at `BWU_ABI_VERSION` 5; wire v25 unchanged).**
   - `game:backpack()` / `:equipment()` / `:bank()` / `:inventory(id)` return a
     `botwithus.inventory` view, with `count`, `contains`, `find`, `free_slots` and the rest. A

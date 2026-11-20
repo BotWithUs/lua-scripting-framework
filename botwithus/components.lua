@@ -62,8 +62,10 @@ end
 -- One entry per child created at run time, so only the COUNT is useful. The agent reports each
 -- dynamic child's comp id, and a dynamic child carries its PARENT's comp id (the client tells them
 -- apart by sub id, which this reply does not carry), so every entry is normally `comp` itself.
--- Never pass an entry to :component() expecting the child: use :interface_tree for the children's
--- own data. (NXTLibrary src/game/Interfaces.cpp GetChildIds.)
+-- Never pass an entry to :component() expecting the child. On host ABI 6 use
+-- game:dynamic_children_with_sub(iface, comp), which returns { {comp, sub}, ... } (the sub
+-- addresses each child), and :interface_tree for the children's own data. (NXTLibrary
+-- src/game/Interfaces.cpp GetChildIds.)
 function Components.dynamic_children(rpc, iface, comp)
   local reply, code = rpc("get_dynamic_children", { iface = iface, comp = comp })
   if reply == nil then return nil, code end

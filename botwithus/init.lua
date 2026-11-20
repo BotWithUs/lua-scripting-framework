@@ -29,6 +29,10 @@ M.walk     = require("botwithus.walk")
 M.Inventory  = require("botwithus.inventory")
 M.Skills     = require("botwithus.skills")
 M.Components = require("botwithus.components")
+-- Host ABI 6: GE offers, the world list and hop, use-on (target mode). See each module.
+M.GrandExchange = require("botwithus.grand_exchange")
+M.Worlds     = require("botwithus.worlds")
+M.Target     = require("botwithus.target")
 
 -- Plugin UI: native game components shaped like Jagex's `ui.*` (see botwithus/game_ui.lua).
 -- Reached per Game: `local ui = game:ui()` (or ctx.ui in bot.run), then ui.Canvas.new(...).
