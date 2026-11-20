@@ -235,6 +235,11 @@ end
 local function iterate(b, script, ctx, iteration, pending, sleep_wait)
   if not apply_queued_config(b, script, ctx, pending) then return false end
   if b.ctl_stopping() then return false end
+  -- Paused (ctx:pause()): hold before on_loop; the hold keeps plugin-UI events flowing.
+  if ctx:is_paused() then
+    ctx.waits:_hold()
+    if b.ctl_stopping() then return false end
+  end
   -- The client exited: its snapshot is unreadable and the host no longer lists it.
   if ctx.game:_client_gone() then return false end
   local ok, delay = try(script.on_loop, ctx)

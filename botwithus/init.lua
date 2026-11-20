@@ -37,6 +37,31 @@ M.Target     = require("botwithus.target")
 M.Definitions = require("botwithus.definitions")
 M.WorldMap   = require("botwithus.worldmap")
 
+-- The composition APIs ported from the Java host (J1-J3). See each module.
+M.Coordinate = M.Tile                              -- the Java host's world.Coordinate
+M.Area       = require("botwithus.area")
+M.Timing     = require("botwithus.timing")         -- condition waits, the run's pause
+M.Timers     = require("botwithus.timers")         -- Stopwatch, Timer, Durations
+M.Xp         = require("botwithus.xp")             -- skill names, XpTable, XpTracker
+M.Match      = require("botwithus.match")          -- item matchers by exact name / pattern / category
+M.Interact   = require("botwithus.interact")       -- NPC / object / ground item options and clicks
+M.Bank       = require("botwithus.bank")
+M.DepositBox = require("botwithus.deposit_box")
+M.Loot       = require("botwithus.loot")
+M.ActionBar  = require("botwithus.actionbar")
+M.Prayers    = require("botwithus.prayers")
+M.Combat     = require("botwithus.combat")         -- local combat state, hitmark history
+M.Changes    = require("botwithus.changes")        -- inventory / skill changes per server tick
+M.Summoning  = require("botwithus.summoning")
+M.Lodestones = require("botwithus.lodestones")
+M.ComponentQuery = require("botwithus.component_query")
+M.Dialog     = require("botwithus.dialog")
+M.Quests     = require("botwithus.quests")
+M.Buffs      = require("botwithus.buffs")
+M.Hud        = require("botwithus.hud")
+M.Settings   = require("botwithus.settings")
+M.Json       = require("botwithus.json")
+
 -- Plugin UI: native game components shaped like Jagex's `ui.*` (see botwithus/game_ui.lua).
 -- Reached per Game: `local ui = game:ui()` (or ctx.ui in bot.run), then ui.Canvas.new(...).
 M.GameUi   = require("botwithus.game_ui")

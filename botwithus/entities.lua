@@ -7,12 +7,16 @@
 -- (:all / :nearest / :count / :first) run the underlying bwu read once.
 
 local Tile = require("botwithus.tile")
+local Interact = require("botwithus.interact")
+local Area = require("botwithus.area")
 
 local Query = {}
 Query.__index = Query
 
-local function new_query(source, preds)
-  return setmetatable({ _source = source, _preds = preds or {} }, Query)
+-- `kind` ("npc", "player", "object", "ground_item", "hint_arrow") picks how names and options
+-- resolve; `game` is the Game the rows come from (for :reachable and :within_distance).
+local function new_query(source, preds, kind, game)
+  return setmetatable({ _source = source, _preds = preds or {}, _kind = kind, _game = game }, Query)
 end
 
 -- Add a predicate, returning a fresh query (immutable chaining).
@@ -20,8 +24,10 @@ function Query:filter(pred)
   local preds = {}
   for i, p in ipairs(self._preds) do preds[i] = p end
   preds[#preds + 1] = pred
-  return new_query(self._source, preds)
+  return new_query(self._source, preds, self._kind, self._game)
 end
+
+function Query:kind() return self._kind end
 
 function Query:of_type(type_id)
   return self:filter(function(e) return e.type_id == type_id end)
@@ -86,21 +92,178 @@ function Query:nearest(origin)
   return best, bestd
 end
 
+-- The Java host's entity filters (J1) ----------------------------------------------------------
+--
+-- Fields a row lacks never match a filter on them: an NPC's hp needs host ABI 5, and an object
+-- row carries no animation, stance or health.
+
+local function id_set(...)
+  local set = {}
+  for _, id in ipairs({ ... }) do set[id] = true end
+  return set
+end
+
+-- Rows whose type id is any of `...` (an object's loc id, a ground item's item id).
+function Query:with_ids(...)
+  local set = id_set(...)
+  return self:filter(function(e) return set[e.type_id] == true end)
+end
+
+-- The display name of a row (players: their name; others: the cache's), or nil.
+function Query:name_of(e) return Interact.name(self._kind, e) end
+
+-- Rows whose WHOLE name is one of `...`, ignoring case (U+00A0 reads as a space).
+function Query:named_any_of(...)
+  local wanted = {}
+  for i, n in ipairs({ ... }) do wanted[i] = Query.normalize_name(n):lower() end
+  return self:filter(function(e)
+    local name = self:name_of(e)
+    if name == nil then return false end
+    name = Query.normalize_name(name):lower()
+    for _, w in ipairs(wanted) do
+      if w ~= "" and name == w then return true end
+    end
+    return false
+  end)
+end
+
+-- Rows whose whole name matches the Lua pattern (anchored at both ends).
+function Query:name_matching(pattern)
+  if pattern:sub(1, 1) ~= "^" then pattern = "^" .. pattern end
+  if pattern:sub(-1) ~= "$" then pattern = pattern .. "$" end
+  return self:filter(function(e)
+    local name = self:name_of(e)
+    return name ~= nil and Query.normalize_name(name):find(pattern) ~= nil
+  end)
+end
+
+-- Rows whose menu lists `option`, ignoring case (NPCs, objects, ground items; from the cache).
+function Query:with_option(option)
+  local kind = self._kind
+  return self:filter(function(e) return Interact.has_option(kind, e, option) end)
+end
+
+-- Animation (NPCs, players): animation_id -1 is "not animating".
+function Query:animating()
+  return self:filter(function(e) return e.animation_id ~= nil and e.animation_id ~= -1 end)
+end
+function Query:not_animating()
+  return self:filter(function(e) return e.animation_id == -1 end)
+end
+function Query:with_animation(...)
+  local set = id_set(...)
+  return self:filter(function(e) return set[e.animation_id] == true end)
+end
+
+-- Actors (NPCs, players): stance, spot animation, movement, combat level.
+function Query:with_stance(...)
+  local set = id_set(...)
+  return self:filter(function(e) return set[e.stance_id] == true end)
+end
+function Query:with_spot_anim(...)
+  local set = id_set(...)
+  return self:filter(function(e) return set[e.spot_anim_id] == true end)
+end
+function Query:moving() return self:filter(function(e) return e.moving == true end) end
+function Query:not_moving() return self:filter(function(e) return e.moving == false end) end
+function Query:with_combat_level(min, max)
+  return self:filter(function(e)
+    return e.combat_level ~= nil and e.combat_level >= min and e.combat_level <= max
+  end)
+end
+
+-- NPC health (host ABI 5 hp / max_hp). Players carry no hp on the wire.
+function Query:with_health(min, max)
+  return self:filter(function(e) return e.hp ~= nil and e.hp >= min and e.hp <= max end)
+end
+
+local FULL_HEALTH_PERCENT = 100
+-- An NPC with an unknown max hp (0) never matches.
+function Query:with_health_percent(min, max)
+  return self:filter(function(e)
+    if e.max_hp == nil or e.max_hp <= 0 then return false end
+    local pct = (e.hp * FULL_HEALTH_PERCENT) // e.max_hp
+    return pct >= min and pct <= max
+  end)
+end
+
+function Query:on_plane(plane)
+  return self:filter(function(e) return e.tile ~= nil and e.tile.plane == plane end)
+end
+
+-- Rows inside / outside a botwithus.area.
+function Query:inside(area) return self:filter(function(e) return area:contains(e) end) end
+function Query:outside(area) return self:filter(function(e) return not area:contains(e) end) end
+
+-- Rows the world walker finds a route to, on the player's plane. One path query per candidate,
+-- and scenery that blocks its own tile (a booth, a tree) reads unreachable: add this filter last.
+function Query:reachable()
+  local game = self._game
+  return self:filter(function(e)
+    if game == nil or e.tile == nil then return false end
+    return e.tile.plane == game:self().tile.plane and Area.is_reachable(game, e.tile)
+  end)
+end
+
+-- Rows within `radius` tiles of the player.
+function Query:within_distance(radius)
+  local game = self._game
+  return self:filter(function(e)
+    if game == nil or e.tile == nil then return false end
+    return Tile.from(game:self().tile):distance(e.tile) <= radius
+  end)
+end
+
+-- Terminals: the last match, a random one, and the nearest to a tile, an entity or x, y[, plane]
+-- (with x, y and no plane it ignores planes, as the Java host's two-argument form does).
+function Query:last()
+  local all = self:all()
+  return all[#all]
+end
+
+function Query:random(random)
+  local all = self:all()
+  if #all == 0 then return nil end
+  return all[(random or math.random)(1, #all)]
+end
+
+function Query:nearest_to(a, y, plane)
+  if type(a) ~= "number" then
+    local t = Tile.from(a.tile or a)
+    a, y, plane = t.x, t.y, t.plane
+  end
+  local best, bestd = nil, math.huge
+  for _, e in ipairs(self:all()) do
+    if e.tile ~= nil and (plane == nil or e.tile.plane == plane) then
+      local d = math.max(math.abs(e.tile.x - a), math.abs(e.tile.y - y))
+      if d < bestd then best, bestd = e, d end
+    end
+  end
+  return best, bestd
+end
+
+-- Click `option` on a row this query returned (NPCs, objects, ground items). False when the
+-- row's menu has no such option.
+function Query:interact(row, option)
+  if self._game == nil then error("botwithus: this query has no Game to click through", 2) end
+  return Interact.row(self._game, self._kind, row, option)
+end
+
 local Entities = {}
 
 -- Npcs over a Game facade. `game:npcs()` is the source, read fresh on each terminal.
 function Entities.npcs(game)
-  return new_query(function() return game:npcs() end)
+  return new_query(function() return game:npcs() end, nil, "npc", game)
 end
 
 -- Players over a Game facade.
 function Entities.players(game)
-  return new_query(function() return game:players() end)
+  return new_query(function() return game:players() end, nil, "player", game)
 end
 
 -- Visible scene objects over a Game facade; :of_type() matches the loc id the server sent.
 function Entities.objects(game)
-  return new_query(function() return game:objects() end)
+  return new_query(function() return game:objects() end, nil, "object", game)
 end
 
 -- Hint arrows over a Game facade; :of_type() matches the arrow type. Any refusal (out of the
@@ -109,12 +272,12 @@ end
 -- answer" here. A query's rows do not carry the list's `truncated` field either: call
 -- game:hint_arrows() for the code or the flag.
 function Entities.hint_arrows(game)
-  return new_query(function() return game:hint_arrows() or {} end)
+  return new_query(function() return game:hint_arrows() or {} end, nil, "hint_arrow", game)
 end
 
 -- Ground-item stacks over a Game facade; :of_type() matches the item id. Needs host ABI 5.
 function Entities.ground_items(game)
-  return new_query(function() return game:ground_items() end)
+  return new_query(function() return game:ground_items() end, nil, "ground_item", game)
 end
 
 Entities.Query = Query

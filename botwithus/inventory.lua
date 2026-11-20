@@ -21,6 +21,8 @@
 -- empty one: check :is_present() before trusting :is_empty() or :count() on it.
 
 local Definitions = require("botwithus.definitions")
+local Match = require("botwithus.match")
+local Actions = require("botwithus.actions")
 
 local Inventory = {}
 Inventory.__index = Inventory
@@ -30,10 +32,28 @@ Inventory.BACKPACK  = 93
 Inventory.EQUIPMENT = 94
 Inventory.BANK      = 95
 
+-- The slot grid each inventory is clicked through: { iface, comp } (Java Backpack, Equipment and
+-- Bank). An inventory with no grid here can be read but not clicked.
+Inventory.GRIDS = {
+  [93] = { iface = 1473, comp = 5 },     -- the backpack window
+  [94] = { iface = 1464, comp = 15 },    -- the worn-equipment window
+  [95] = { iface = 517, comp = 201 },    -- BANK__BANK_INV
+}
+
+-- The beast-of-burden inventory (LORE_BOB). Not 671: the gameval index names 671
+-- WORN_DISPLAY_PREVIEW.
+Inventory.FAMILIAR = 530
+-- The area-loot window's inventory (LOOT).
+Inventory.LOOT = 773
+
+-- The option the client selects an item for use-on with. It is never one of a component's ops,
+-- so it is looked up in the cache's inventory ops instead of the live menu.
+Inventory.USE = "Use"
+
 -- A view of inventory `inv_id` from its slot rows, or of an inventory that was not published
--- (rows == nil).
-function Inventory.new(inv_id, rows)
-  return setmetatable({ _id = inv_id, _rows = rows }, Inventory)
+-- (rows == nil). `game` (optional) lets the view click its slots, through Inventory.GRIDS.
+function Inventory.new(inv_id, rows, game)
+  return setmetatable({ _id = inv_id, _rows = rows, _game = game }, Inventory)
 end
 
 local function is_item(row) return row.item_id >= 0 end
@@ -124,5 +144,94 @@ function Inventory:free_slots() return self:size() - #self:items() end
 -- Not published reads as neither empty nor full: there is nothing to say either way.
 function Inventory:is_empty() return self:is_present() and #self:items() == 0 end
 function Inventory:is_full() return self:size() > 0 and self:free_slots() == 0 end
+
+-- Exact names, patterns, categories (the Java host's InventoryContainer) ----------------------
+--
+-- Every name-taking method below matches the WHOLE display name (see botwithus.match): these
+-- decide what to click, and with a substring "Logs" would click Oak logs.
+
+-- The first item whose whole name is `name`, ignoring case, or nil.
+function Inventory:find_exact(name) return self:find(Match.exact(name)) end
+
+-- Whether every one of `...` (whole names) is present.
+function Inventory:contains_all_of(...)
+  for _, name in ipairs({ ... }) do
+    if self:find_exact(name) == nil then return false end
+  end
+  return true
+end
+
+-- Whether any of `...` (whole names) is present.
+function Inventory:contains_any_of(...) return self:find(Match.exact(...)) ~= nil end
+
+-- Whether anything other than `...` is present: item ids, or whole names when the first is a
+-- string.
+function Inventory:contains_any_except(...)
+  local first = ...
+  local keep = type(first) == "string" and Match.exact(...) or Match.ids(...)
+  return self:find(Match.negate(keep)) ~= nil
+end
+
+function Inventory:contains_category(category) return self:find(Match.category(category)) ~= nil end
+function Inventory:find_all_in_category(category) return self:find_all(Match.category(category)) end
+
+-- The items whose cache inventory ops include `option` (ignoring case).
+function Inventory:items_with_option(option) return self:find_all(Match.option(option)) end
+
+-- Clicking ------------------------------------------------------------------------------------
+
+local function grid_of(self)
+  local grid = Inventory.GRIDS[self._id]
+  if self._game == nil or grid == nil then
+    error("botwithus: inventory " .. tostring(self._id) .. " cannot be clicked from this view", 3)
+  end
+  return grid
+end
+
+-- Click option index `op` (1-based, as the COMPONENT action takes it) on 0-based `slot`. False
+-- for a slot outside the inventory.
+function Inventory:interact_slot(slot, op)
+  local grid = grid_of(self)
+  if slot < 0 or slot >= self:size() then return false end
+  self._game:do_action(Actions.component_click(grid.iface, grid.comp, op, slot))
+  return true
+end
+
+-- The op the live menu lists as `option` on this slot (ignoring case), or nil.
+function Inventory:_live_op(row, option)
+  local grid = grid_of(self)
+  local reply = self._game:component_ops(grid.iface, grid.comp, row.slot)
+  for _, op in ipairs(reply and reply.ops or {}) do
+    if op.name:lower() == option:lower() then return op.op end
+  end
+  return nil
+end
+
+-- "Use" through the cache's inventory ops: its position there is the op to send.
+local function cache_op(row, option)
+  local ok, def = pcall(Definitions.item, row.item_id)
+  for i, op in ipairs(ok and def and def.inventory_ops or {}) do
+    if op:lower() == option:lower() then return i end
+  end
+  return nil
+end
+
+-- Click `option` on the first item `target` matches. `target` is an item id, an EXACT whole name,
+-- a list of either, or a matcher (botwithus.match). The op is the one the client's live menu
+-- lists under that name (one component_ops round trip), never a position in the cache's list:
+-- the client's own Drop is not in that list. "Use" is the exception (see Inventory.USE). False
+-- when no item matches or its menu has no such option; nothing is sent then.
+function Inventory:interact(target, option)
+  local row = self:find(Match.target(target))
+  if row == nil then return false end
+  local op
+  if option:lower() == Inventory.USE:lower() then op = cache_op(row, option)
+  else op = self:_live_op(row, option) end
+  if op == nil then return false end
+  return self:interact_slot(row.slot, op)
+end
+
+-- Select the first item `target` matches for use-on (its "Use" op).
+function Inventory:use(target) return self:interact(target, Inventory.USE) end
 
 return Inventory

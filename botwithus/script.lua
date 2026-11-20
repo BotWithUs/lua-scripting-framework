@@ -17,6 +17,8 @@
 local Game   = require("botwithus.game")
 local Config = require("botwithus.config")
 local Ctl    = require("botwithus.ctl")
+local Timing = require("botwithus.timing")
+local Settings = require("botwithus.settings")
 
 local Script = {}
 
@@ -119,6 +121,21 @@ local function sleep_ticks(game, wait, n)
 end
 Script._sleep_ticks = sleep_ticks
 
+-- The sleep the condition waits use: like make_wait, for `ms` at a time. Returns false once the
+-- run is stopping.
+local function make_sleep(clients)
+  if clients then
+    return function(ms)
+      local handled, code, msg = clients:pump(ms)
+      if not handled then error("botwithus: client-management wait failed: " .. tostring(code)
+        .. ": " .. tostring(msg), 0) end
+      return not Ctl.stopping()
+    end
+  end
+  return Timing.default_sleep()
+end
+Script._make_sleep = make_sleep
+
 local function make_ctx(game, wait, clients)
   local ctx = { game = game, clients = clients, config = {} }
   -- The plugin-UI namespace, shaped like Jagex's `ui.*` (botwithus/game_ui.lua).
@@ -128,6 +145,23 @@ local function make_ctx(game, wait, clients)
   function ctx:sleep_ticks(n) return sleep_ticks(game, wait, n) end
   -- True once the run has been asked to stop: finish up and return from on_loop.
   function ctx:stopping() return Ctl.stopping() end
+  -- Condition waits (botwithus.timing): each returns whether its condition was met, ends early
+  -- on a stop or the client exiting, and holds while the run is paused.
+  local waits = Timing.for_game(game, { sleep = make_sleep(clients) })
+  ctx.waits = waits
+  function ctx:delay_until(cond, timeout_ms) return waits:until_(cond, timeout_ms) end
+  function ctx:delay_while(cond, timeout_ms) return waits:while_(cond, timeout_ms) end
+  function ctx:delay_until_ticks(cond, max_ticks) return waits:until_ticks(cond, max_ticks) end
+  function ctx:delay_ticks(min_ticks, max_ticks) return waits:delay_ticks(min_ticks, max_ticks) end
+  -- Pause / resume: while paused no on_loop runs and the condition waits hold. Something else
+  -- must resume a script that paused itself: a plugin-UI handler or a client-management event
+  -- handler (both run inside the waits). A stop still ends a paused run.
+  local pause = Timing.pause_of(game)
+  function ctx:pause() pause:pause() end
+  function ctx:resume() return pause:resume() end
+  function ctx:is_paused() return pause:is_paused() end
+  -- Writable settings over ctx.config (botwithus.settings); not persisted by the host yet.
+  ctx.settings = Settings.new(function() return ctx.config end)
   return ctx
 end
 Script._make_ctx = make_ctx
@@ -288,6 +322,9 @@ local function lifecycle(script, ctx, game, opts, progress)
   local iters = 0
   while not Ctl.stopping() do
     if game:_client_gone() then break end
+    -- Paused: hold here (the waits keep plugin-UI events flowing, so a UI button can resume).
+    if ctx:is_paused() then ctx.waits:_hold() end
+    if Ctl.stopping() or game:_client_gone() then break end
     game:_pump_ui()
     progress.iteration = iters + 1
     local delay = script.on_loop(ctx)

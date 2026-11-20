@@ -425,7 +425,7 @@ end
 -- A view of inventory `inv_id` (botwithus.inventory). Not published reads as :is_present()
 -- false, never as an empty inventory.
 function Game:inventory(inv_id)
-  return Inventory.new(inv_id, abi5("inventory")(host(self), inv_id))
+  return Inventory.new(inv_id, abi5("inventory")(host(self), inv_id), self)
 end
 
 function Game:backpack()  return self:inventory(Inventory.BACKPACK) end
@@ -498,6 +498,22 @@ end
 -- refuses or does not answer. The long tail: prefer a typed read where there is one.
 function Game:rpc_raw(method, params)
   return abi5("rpc_raw")(host(self), method, params)
+end
+
+-- The agent's Escape-menu leave RPCs (logout -> the login screen, exit_to_lobby -> the lobby).
+-- True once the clicks are queued; false, code on a refusal (not_in_game, actions_blocked,
+-- logout_ui_not_found, action_queue_full) or no answer. Poll game_state() for the result: right
+-- after a login the first click has been seen to be lost, so wait ~10 ticks after logging in.
+function Game:logout()
+  local reply, code = self:rpc_raw("logout", {})
+  if reply == nil then return false, code end
+  return true
+end
+
+function Game:exit_to_lobby()
+  local reply, code = self:rpc_raw("exit_to_lobby", {})
+  if reply == nil then return false, code end
+  return true
 end
 
 -- The raw front snapshot frame (wire v25 layout), as a string for string.unpack. A fresh copy

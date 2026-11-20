@@ -571,9 +571,26 @@ function M.install_abi6(bwu, opts)
     record("dynamic_children", iface, comp)
     return { { comp = comp, sub = 0 }, { comp = comp, sub = 1 } }
   end
-  function bwu.script_handle(_, id) record("script_handle", id); return id == 4321 and 0x100000001 or 0 end
+  -- opts.script_results maps a script id to function(int_args) -> the returns list, or a string
+  -- code the agent refuses with. With it, the handle of script id is id + SCRIPT_HANDLE_BASE and
+  -- an unlisted script id is refused ("script_not_found").
+  local SCRIPT_HANDLE_BASE = 0x100000000
+  local scripts = opts.script_results
+  function bwu.script_handle(_, id)
+    record("script_handle", id)
+    if scripts then
+      if scripts[id] == nil then return nil, "script_not_found" end
+      return id + SCRIPT_HANDLE_BASE
+    end
+    return id == 4321 and 0x100000001 or 0
+  end
   function bwu.execute_script(_, handle, ints, strs, returns)
     record("execute_script", handle, ints, strs, returns)
+    if scripts then
+      local result = scripts[handle - SCRIPT_HANDLE_BASE](ints)
+      if type(result) == "string" then return nil, result end
+      return result
+    end
     return { 42 }
   end
   function bwu.destroy_script_handle(_, handle) record("destroy_script_handle", handle); return true end
@@ -649,12 +666,13 @@ function M.install_abi7(bwu, opts)
     if opts.no_cache then return nil, no_cache() end
     if math.type(id) ~= "integer" or id < 0 then error("bwu.cache_item: a cache id is never negative") end
     st.item_reads = st.item_reads + 1
-    local d = ABI7_ITEMS[id]
+    local d = (opts.cache_items or {})[id] or ABI7_ITEMS[id]
     if d == nil then return nil, "not_found" end
     return d
   end
   function bwu.cache_npc(id)
     if opts.no_cache then return nil, no_cache() end
+    if (opts.cache_npcs or {})[id] then return opts.cache_npcs[id] end
     if id ~= 2001 then return nil, "not_found" end
     return { id = 2001, name = "Fixture guard", combat_level = 88, visible = true, clickable = false,
              varbit_id = 555, varp_id = -1, transform_count = 3, param_count = 1, text_truncated = 0,
@@ -662,6 +680,7 @@ function M.install_abi7(bwu, opts)
   end
   function bwu.cache_loc(id)
     if opts.no_cache then return nil, no_cache() end
+    if (opts.cache_locs or {})[id] then return opts.cache_locs[id] end
     if id ~= 3001 then return nil, "not_found" end
     return { id = 3001, name = "Fixture door", size_x = 2, size_y = 3, interact_type = 2, solid_type = 1,
              members = true, varbit_id = -1, varp_id = 1234, transform_count = 1, map_sprite_id = 17,
@@ -670,12 +689,17 @@ function M.install_abi7(bwu, opts)
   function bwu.cache_params(cache_type, id)
     record("cache_params", cache_type, id)
     if opts.no_cache then return nil, no_cache() end
+    local extra = (opts.cache_params or {})[cache_type .. ":" .. id]
+    if extra then return extra end
     if cache_type ~= 0 or id ~= 4151 then return nil, "not_found" end
     return { { param_id = 14, kind = 0, value = 4, text_truncated = false },
              { param_id = 555, kind = 1, text = "Whip", text_truncated = true } }
   end
   function bwu.cache_json(cache_type, id)
     if opts.no_cache then return nil, no_cache() end
+    record("cache_json", cache_type, id)
+    local extra = (opts.cache_json or {})[cache_type .. ":" .. id]
+    if extra then return extra end
     if cache_type == 3 and id == 5001 then return '{"id":5001,"entries":{"1":"one"}}' end
     return nil, "not_found"
   end
