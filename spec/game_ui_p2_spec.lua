@@ -87,7 +87,7 @@ T["p2: a toggle on a button that cannot toggle is the agent's refusal"] = functi
   local b = ui.Button.new(area)
   local err = raised(assert_, function() b.isToggled = true end)
   assert_(err.kind == "refused" and err.verb == "ui.set"
-    and err.message == "ui: toggled needs a button that can toggle", tostring(err))
+    and err.message == "ui: toggled needs a button that can toggle (set can_toggle: true)", tostring(err))
 end
 
 T["p2: Check.value is the wire's checked; Check.label is the agent's not-supported refusal"] = function(assert_)
@@ -149,7 +149,7 @@ T["p2: Slider Setup, SetRange, SetValue and value; min/max/step/ticks read back"
   assert_(s.value == 40 and s.minValue == 0 and s.maxValue == 100 and s.step == 10 and s.ticks == 10,
     "readback")
   local err = raised(assert_, s.SetValue, s, 35)
-  assert_(err.kind == "refused" and err.message == "ui: slider value refused by the client", tostring(err))
+  assert_(err.kind == "refused" and err.message == fake_bwu.UI_SLIDER_VALUE, tostring(err))
 end
 
 T["p2: a slider range missing one of the four is refused by the agent"] = function(assert_)
@@ -180,7 +180,8 @@ T["p2: ComboField entries, Select and the selection reads"] = function(assert_)
   c:UnselectAll()
   assert_(last_set(f).selected == -1 and c.selectedID == -1, "UnselectAll is -1")
   local err = raised(assert_, c.Select, c, 77)
-  assert_(err.kind == "refused" and err.message == "ui: no entry with that id", tostring(err))
+  assert_(err.kind == "refused" and err.message == "ui: selected names no entry of this combo_field",
+    tostring(err))
 end
 
 T["p2: Add, Remove, Clear and HasEntry rewrite the entries in one set, keeping the selection"] = function(assert_)
@@ -196,7 +197,8 @@ T["p2: Add, Remove, Clear and HasEntry rewrite the entries in one set, keeping t
   assert_(c:HasEntry(7) and not c:HasEntry(8), "HasEntry")
   assert_(c:Remove(6) == true, "Remove")
   p = last_set(f)
-  assert_(#p.entries == 2 and p.selected == nil and c.selectedID == -1, "removing the selected one")
+  assert_(#p.entries == 2 and p.selected == -1 and c.selectedID == -1,
+    "removing the selected one sends selected = -1 with the entries")
   assert_(c:Remove(6) == false, "a missing id: false")
   c:Clear()
   assert_(#last_set(f).entries == 0 and c.numEntries == 0, "Clear")
@@ -241,8 +243,7 @@ T["p2: a list selection over the limit is the agent's refusal"] = function(asser
   l.maxSelected = 2   -- a limit L > 1 holds L - 1
   l:SetEntrySelected(1, true)
   local err = raised(assert_, l.SetEntrySelected, l, 2, true)
-  assert_(err.kind == "refused"
-    and err.message == "ui: more entries selected than selection_limit allows", tostring(err))
+  assert_(err.kind == "refused" and err.message == fake_bwu.UI_LIST_LIMIT, tostring(err))
 end
 
 T["p2: Panel.vertical; panel spacing and grid layout are the agent's refusals"] = function(assert_)
@@ -549,6 +550,174 @@ T["p2: an Unsubscribe that times out raises kind timeout"] = function(assert_)
   f.timeout = true
   local err = raised(assert_, b.Unsubscribe, b, ui.Hook.ONCLICK)
   assert_(err.kind == "timeout" and err.verb == "ui.unsubscribe", tostring(err))
+end
+
+-- Review fixes (F1-F5) ------------------------------------------------------------------------
+
+T["p2 F1: a default list is single-select: selecting another replaces, UnselectAll is a no-op"] = function(assert_)
+  local _, _, ui, f, area = setup()
+  local l = ui.List.new(area)   -- no selection_limit: the client's default, 1
+  l:SetEntries({ "Oak", "Willow", "Yew" })
+  assert_(l:SetEntrySelected(1, true) == true, "select 1")
+  assert_(l:SetEntrySelected(2, true) == true, "select 2 on a single-select list does not raise")
+  local sel = last_set(f).selected
+  assert_(#sel == 1 and sel[1] == 2, "2 replaced 1")
+  assert_(l:GetEntrySelected(2) and not l:GetEntrySelected(1), "readback")
+  local sets = #f.calls_of("ui_set")
+  l:UnselectAll()
+  assert_(#f.calls_of("ui_set") == sets and l:GetEntrySelected(2), "UnselectAll: no-op at limit 1")
+  l:SetEntrySelected(2, false)
+  assert_(#last_set(f).selected == 0, "deselecting still works")
+end
+
+T["p2 F1: a list selection over the limit is the agent's own text"] = function(assert_)
+  local _, _, ui, f, area = setup()
+  local l = ui.List.new(area)
+  l:SetEntries({ "a", "b", "c" })
+  local err = raised(assert_, l.Set, l, { selected = { 1, 2 } })
+  assert_(err.message == fake_bwu.UI_LIST_LIMIT
+    and err.message:find("limit 1: one; limit L > 1: L - 1", 1, true), tostring(err))
+  assert_(f ~= nil)
+end
+
+-- A run whose button is subscribed, and a click the client raises during on_stop.
+local function click_in_on_stop(crash)
+  local b = fake_bwu.new()
+  _G.bwu = b
+  local f = b._ui
+  local clicks, reasons, button = 0, {}, nil
+  pcall(bot.run, {
+    manifest = { name = "p2 stop", version = "1", author = "t" },
+    on_start = function(ctx)
+      local ui = ctx.ui
+      button = ui.Button.new(ui.Interfaces:GetComponent(IFACE, COMP))
+      button:Subscribe(ui.Hook.ONCLICK, function() clicks = clicks + 1 end)
+      button:Subscribe(ui.Hook.DESTROYED, function(_, r) reasons[#reasons + 1] = r end)
+    end,
+    on_loop = function()
+      if crash then error("boom") end
+      return -1
+    end,
+    on_stop = function() f.fire(button.handle, "onclick", 1, 2) end,
+  }, { max_iters = 1 })
+  return clicks, reasons, f
+end
+
+T["p2 F2: a click raised during on_stop never runs its callback; DESTROYED still does"] = function(assert_)
+  local clicks, reasons, f = click_in_on_stop(false)
+  assert_(clicks == 0, "the click callback ran after on_stop: " .. clicks)
+  assert_(#reasons == 1 and reasons[1] == "released", "DESTROYED ran with released")
+  assert_(#f.calls_of("ui_destroy_all") == 1, "released once")
+end
+
+T["p2 F2: after a crash too, the release runs no wire-hook callback"] = function(assert_)
+  local clicks, reasons = click_in_on_stop(true)
+  assert_(clicks == 0, "the click callback ran after a crash: " .. clicks)
+  assert_(reasons[1] == "released", "DESTROYED ran")
+end
+
+T["p2 F2: a Game's ui is usable after a release (the flag is cleared)"] = function(assert_)
+  local _, _, ui, f, area = setup()
+  ui.Button.new(area)
+  ui:release()   -- releases the Jagex parent it looked up too: look it up again
+  local b = ui.Button.new(ui.Interfaces:GetComponent(IFACE, COMP))
+  local n = 0
+  b:Subscribe(ui.Hook.ONCLICK, function() n = n + 1 end)
+  f.fire(b.handle, "onclick", 1, 1)
+  ui:poll()
+  assert_(n == 1, "callbacks run again")
+end
+
+T["p2 F3: Subscribe without an id replaces the default listener; Unsubscribe(hook) removes it"] = function(assert_)
+  local _, _, ui, f, area = setup()
+  local b = ui.Button.new(area)
+  local got = {}
+  b:Subscribe(ui.Hook.ONCLICK, function() got[#got + 1] = "first" end)
+  b:Subscribe(ui.Hook.ONCLICK, function() got[#got + 1] = "second" end)
+  b:Subscribe(ui.Hook.ONCLICK, "named", function() got[#got + 1] = "named" end)
+  f.fire(b.handle, "onclick", 1, 1)
+  ui:poll()
+  assert_(#got == 2 and got[1] == "second" and got[2] == "named", table.concat(got, ","))
+  b:Unsubscribe(ui.Hook.ONCLICK)
+  assert_(#f.calls_of("ui_unsubscribe") == 0, "the named one is left")
+  b:Unsubscribe(ui.Hook.ONCLICK, "named")
+  assert_(#f.calls_of("ui_unsubscribe") == 1, "now none: unsubscribed")
+end
+
+T["p2 F4: a callback that polls (or sleeps) does not reorder events"] = function(assert_)
+  local _, _, ui, f, area = setup()
+  local b = ui.Button.new(area)
+  local order, nested = {}, nil
+  b:Subscribe(ui.Hook.ONCLICK, function(_, x)
+    order[#order + 1] = x
+    if x == 1 then nested = ui:poll() end   -- as sleep_ticks would pump
+  end)
+  for x = 1, 3 do f.fire(b.handle, "onclick", x, 0) end
+  local outer = ui:poll()
+  assert_(nested and #nested == 0, "the nested poll gets nothing")
+  assert_(#order == 3 and order[1] == 1 and order[2] == 2 and order[3] == 3,
+    "in order: " .. table.concat(order, ","))
+  assert_(#outer == 3, "the outer poll handed out all three")
+  f.fire(b.handle, "onclick", 4, 0)
+  assert_(#ui:poll() == 1, "the guard is cleared afterwards")
+end
+
+T["p2 F4: a poll that raises clears the guard"] = function(assert_)
+  local _, _, ui, f, area = setup()
+  ui.Button.new(area)
+  f.poll_error = "pipe lost"
+  assert_(not pcall(ui.poll, ui), "raises")
+  f.poll_error = nil
+  local b = ui.Button.new(area)
+  b:Subscribe(ui.Hook.ONCLICK, function() end)
+  f.fire(b.handle, "onclick", 1, 1)
+  assert_(#ui:poll() == 1, "polls again")
+end
+
+T["p2 F5: InputFieldActionResult.NONE never equals a delivered reason"] = function(assert_)
+  local _, _, ui = setup()
+  local r = ui.InputFieldActionResult
+  assert_(r.NONE ~= nil, "NONE exists")
+  for _, v in ipairs({ r.CONTENT_CHANGE, r.ERROR, r.SUBMIT, r.SUBMIT_ON_ESCAPE, r.SUBMIT_ON_FOCUS_LOSS }) do
+    assert_(v ~= r.NONE, "distinct")
+  end
+end
+
+T["p2 F5: a restricted input field's content reads as an empty string"] = function(assert_)
+  local _, _, ui, f, area = setup()
+  local i = ui.InputField.new(area)
+  i.content = "secret"
+  f.restrict(i.handle)
+  assert_(i.content == "", "restricted: empty, as Jagex's")
+  local err = raised(assert_, function() i.content = "x" end)
+  assert_(err.kind == "refused" and err.message == fake_bwu.UI_RESTRICTED_SET, "a set still raises")
+  f.timeout = true
+  err = raised(assert_, function() return i.content end)
+  assert_(err.kind == "timeout", "other failures still raise")
+end
+
+T["p2 F5: a combo entry's selectable is not supported yet"] = function(assert_)
+  local _, _, ui, _, area = setup()
+  local c = ui.ComboField.new(area)
+  c:SetEntries({ "a" })
+  local e = c.entries[1]
+  assert_(e.id == 1 and e.text == "a", "id and text")
+  local err = raised(assert_, function() return e.selectable end)
+  assert_(err.kind == "unsupported" and err.message:find("not supported yet", 1, true), tostring(err))
+end
+
+T["p2: ComboField:Remove of the selected entry sends selected = -1; a list's sends {}"] = function(assert_)
+  local _, _, ui, f, area = setup()
+  local c = ui.ComboField.new(area)
+  c:SetEntries({ "a", "b" }, 1)
+  c:Remove(1)
+  assert_(last_set(f).selected == -1, "combo: -1")
+  local l = ui.List.create(area, { selection_limit = 3 })
+  l:SetEntries({ "a", "b" })
+  l:SetEntrySelected(2, true)
+  l:Remove(2)
+  local p = last_set(f)
+  assert_(type(p.selected) == "table" and #p.selected == 0 and #p.entries == 1, "list: {}")
 end
 
 -- A P1 host -------------------------------------------------------------------------------

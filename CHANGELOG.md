@@ -16,6 +16,10 @@
     `ui.TextContentVisibilityMode`.
   - A gone component takes its subscriptions with it: no `ui.unsubscribe` for it, and
     `Unsubscribe` on it succeeds. The end of a run is still one `ui.destroy_all`.
+  - A default list is single-select (selecting another replaces; `UnselectAll` is a no-op);
+    `Subscribe(hook, fn)` without an id replaces the hook's default callback; no click, content
+    or selection callback runs once `on_stop` has returned or the run crashed; a callback that
+    polls or sleeps does not reorder events; a restricted input field's content reads `""`.
   - Tests: `spec/game_ui_p2_spec.lua` (fake agent P2 rules; `ui_p1 = true` plays an older host);
     live: `tests/live/ui_smoke_p2.lua`.
 

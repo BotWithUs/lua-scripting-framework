@@ -124,7 +124,9 @@ local function wire_hook(hook)
 end
 
 -- Jagex's enums for the hook arguments, numbered as the agent sends them (PUBLIC_PROTOCOL 6.12).
-local INPUT_ACTION_RESULT = { CONTENT_CHANGE = 0, ERROR = 1, SUBMIT = 2, SUBMIT_ON_ESCAPE = 3,
+-- NONE is Jagex's; the agent never sends it (its reasons are 0..4), so it is -1 here and never
+-- equals a reason a callback receives.
+local INPUT_ACTION_RESULT = { NONE = -1, CONTENT_CHANGE = 0, ERROR = 1, SUBMIT = 2, SUBMIT_ON_ESCAPE = 3,
                               SUBMIT_ON_FOCUS_LOSS = 4 }
 local SELECTION_CHANGE_EVENT = { DESELECTED = 0, SELECTED = 1, ERROR_MAX_SELECTED = 2,
                                  ERROR_NOT_SELECTABLE = 3 }
@@ -344,6 +346,9 @@ function Registry:dispatch(ev)
   if ev.hook == HOOK_DESTROYED and comp then
     self:gone(comp, ev.reason, ev)
   elseif IS_WIRE_HOOK[ev.hook] then
+    -- While the run's end releases (on_stop has returned, or the run crashed), a click or a
+    -- selection must not call back into the script: it is dropped here, unseen.
+    if self.releasing then return ev end
     if comp then run_subs(comp, ev.hook, ev, decode_hook(ev)) else decode_hook(ev) end
   elseif ev.hook == HOOK_OVERFLOW then
     local ok, err = pcall(self.reconcile, self, ev)
@@ -360,16 +365,24 @@ end
 -- Read every queued ui event (never waits) and dispatch them, in order. One host call hands
 -- over at most POLL_BATCH events, so this calls again until one returns fewer. Nothing is read
 -- before the first ui call: the host subscribes on that call, so there can be no event.
+--
+-- Not re-entrant: a callback that sleeps (sleep_ticks pumps) or calls ui:poll() inside a poll
+-- gets {}, and the events after its own stay queued for the outer poll, so the order holds.
 function Registry:poll()
-  if not self.used or not self.game._host then return {} end
+  if not self.used or not self.game._host or self.polling then return {} end
+  self.polling = true
   local all = {}
-  repeat
-    local events = surface().ui_poll_events(self.game._host)
-    for _, ev in ipairs(events) do
-      self:dispatch(ev)
-      all[#all + 1] = ev
-    end
-  until #events < POLL_BATCH or not self.game._host
+  local ok, err = pcall(function()
+    repeat
+      local events = surface().ui_poll_events(self.game._host)
+      for _, ev in ipairs(events) do
+        self:dispatch(ev)
+        all[#all + 1] = ev
+      end
+    until #events < POLL_BATCH or not self.game._host
+  end)
+  self.polling = false
+  if not ok then error(err, 0) end
   return all
 end
 
@@ -387,6 +400,7 @@ end
 -- of ui.destroy_all calls sent (0 or 1).
 function Registry:release()
   if not self.used or not self.game._host or self.game._exited then return 0 end
+  self.releasing = true   -- from here no wire-hook callback runs (see dispatch)
   self:pump()   -- learn about anything the game already took down
   local ok, n, err = pcall(surface().ui_destroy_all, self.game._host)
   if not ok then log("release failed: " .. tostring(n))
@@ -395,6 +409,7 @@ function Registry:release()
   for i = #self.created, 1, -1 do held[#held + 1] = self.comps[self.created[i]] end
   for _, comp in ipairs(held) do self:gone(comp, REASON_RELEASED) end
   self:detached()   -- the Jagex parents it looked up are released too
+  self.releasing = false
   return 1
 end
 
@@ -498,6 +513,24 @@ Component._info_fields = {
   key = "key", isJagex = "jagex",
 }
 
+-- The agent's refusal to read a restricted component's content (UiRegistry, a17edc4).
+local RESTRICTED_CONTENT = "ui: content of a restricted component cannot be read"
+
+-- `content` of a text or an input field. A restricted input field (a password field) reads as
+-- "", as Jagex's does; every other refusal raises.
+function Component._content(self, class)
+  local reg = self._reg
+  local b = surface()
+  local host = reg:host()
+  reg.used = true
+  local r, err, kind = b.ui_get(host, self.handle, true)
+  if r ~= nil then return r.content end
+  if class._type == "input_field" and kind == "refused" and err == RESTRICTED_CONTENT then
+    return ""
+  end
+  raise("ui.get", kind or "refused", err)
+end
+
 function Component._read(self, class, key)
   local info_field = Component._info_fields[key]
   if info_field then return self._info[info_field] end
@@ -506,9 +539,7 @@ function Component._read(self, class, key)
     if not p or p == 0 then return nil end
     return self._reg.comps[p] or p
   end
-  if key == "content" and class._get.content then
-    return self._reg:call("ui_get", "ui.get", self.handle, true).content
-  end
+  if key == "content" and class._get.content then return Component._content(self, class) end
   local field = class._get[key]
   if not field then unsupported(class._name .. "." .. key) end
   local readback = self._reg:call("ui_get", "ui.get", self.handle)
@@ -592,21 +623,26 @@ end
 --   ONSELECTIONCHANGED (slider)                  fn(component, value, 1, event)
 --   ONSELECTIONCHANGED (combo field, list)       fn(component, entryID, selectionEvent, event)
 -- Returning false stops later callbacks for the same event. The same hook and id replaces the
--- earlier callback. The first callback for a hook sends ui.subscribe (the agent's refusal, e.g.
+-- earlier callback, and so does Subscribe(hook, fn) again (one default callback per hook, as
+-- Jagex's), which Unsubscribe(hook) removes. The first callback for a hook sends ui.subscribe
+-- (the agent's refusal, e.g.
 -- "ui: hook not valid for this type", raises and nothing is kept). Other hooks raise "not
 -- supported yet".
+-- The key of the listener subscribed without an id: Jagex keeps one default listener per hook,
+-- so Subscribe(hook, fn) again replaces it and Unsubscribe(hook) removes it.
+local DEFAULT_ID = setmetatable({}, { __tostring = function() return "default" end })
+
 function Component:Subscribe(hook, id, fn)
   if fn == nil then id, fn = nil, id end
+  if id == nil then id = DEFAULT_ID end
   if type(fn) ~= "function" then error("botwithus.ui: Subscribe needs a callback", 2) end
   local wire = wire_hook(hook)
   if not wire then unsupported("ui hook " .. tostring(hook)) end
   if wire ~= HOOK_DESTROYED then self._reg:subscribe(self, wire) end
   local subs = self._subs[wire] or {}
   self._subs[wire] = subs
-  if id ~= nil then
-    for _, s in ipairs(subs) do
-      if s.id == id then s.fn = fn; return end
-    end
+  for _, s in ipairs(subs) do
+    if s.id == id then s.fn = fn; return end
   end
   subs[#subs + 1] = { id = id, fn = fn }
 end
@@ -620,6 +656,7 @@ end
 -- Unsubscribe(hook) removes the callback subscribed without an id; Unsubscribe(hook, id) the
 -- one with that id. Removing the last one sends ui.unsubscribe, unless the component is gone.
 function Component:Unsubscribe(hook, id)
+  if id == nil then id = DEFAULT_ID end
   local wire = wire_hook(hook) or hook
   local subs = self._subs[wire]
   if not subs then return end
@@ -900,7 +937,9 @@ function Choice:Remove(id)
   for _, s in ipairs(selection_of(self, r)) do
     if s ~= id then ids[#ids + 1] = s end
   end
-  rewrite(self, r, entries, ids)
+  -- The selection goes with the entries every time, so removing the selected entry has a
+  -- defined outcome (none selected: -1 / {}), whatever the client would keep.
+  self:Set({ entries = entries, selected = selection_wire(self, ids) })
   return true
 end
 
@@ -909,8 +948,10 @@ function Choice:Clear()
   self:Set({ entries = {} })
 end
 
+-- Jagex: a no-op on a single-select list (selection_limit 1); a combo field selects none.
 function Choice:UnselectAll()
   needs_p2(getmetatable(self)._name .. ":UnselectAll")
+  if is_list(self) and (self:Get().selection_limit or 1) <= 1 then return end
   self:Set({ selected = selection_wire(self, {}) })
 end
 
@@ -918,9 +959,21 @@ function Choice:HasEntry(id) return find_entry(self:Get(), int(id)) ~= nil end
 
 local function entry_count(r) return #(r.entries or {}) end
 
+-- A combo entry: { id, text }. Jagex's `selectable` has no wire form yet.
+local COMBO_ENTRY = { __index = function(_, key)
+  if key == "selectable" then unsupported("ComboField entry.selectable") end
+  return nil
+end }
+
+local function combo_entries(r)
+  local out = wire_entries(r)
+  for i, e in ipairs(out) do out[i] = setmetatable(e, COMBO_ENTRY) end
+  return out
+end
+
 CLASSES.ComboField = component_class("ComboField", "combo_field", {
   get = {
-    entries = wire_entries, numEntries = entry_count, selectedID = "selected",
+    entries = combo_entries, numEntries = entry_count, selectedID = "selected",
     hasSelection = function(r) return r.selected ~= nil and r.selected >= 0 end,
     selectedLabel = function(r)
       local e = find_entry(r, r.selected)
@@ -962,11 +1015,16 @@ local List = CLASSES.List._methods
 function List:SetEntrySelected(id, selected, trigger)
   no_trigger("List:SetEntrySelected", trigger)
   id = int(id)
+  local r = self:Get()
   local ids = {}
-  for _, s in ipairs(selection_of(self, self:Get())) do
-    if s ~= id then ids[#ids + 1] = s end
+  if selected and (r.selection_limit or 1) <= 1 then
+    ids = { id }   -- single select: selecting one replaces the other, as the client does
+  else
+    for _, s in ipairs(selection_of(self, r)) do
+      if s ~= id then ids[#ids + 1] = s end
+    end
+    if selected then ids[#ids + 1] = id end
   end
-  if selected then ids[#ids + 1] = id end
   self:Set({ selected = ids })
   return true
 end

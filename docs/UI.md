@@ -109,13 +109,13 @@ end)
 | `ui.Button.new`, `ui.Check.new`, `ui.InputField.new`, `ui.Slider.new`, `ui.ComboField.new`, `ui.List.new`, `ui.Panel.new`, `ui.Grid.new` | the same (and `Type.create(parent, props, opts)` with the wire props, e.g. `entries`) |
 | `Button.label`, `.canToggle`, `.isToggled` | the same, read and write (a toggle needs `canToggle`) |
 | `Check.value` | the same (the wire's `checked`) |
-| `InputField.content`, `.filterMode`, `.maxLength` (read), `:Setup(visibility, filter, maxLength)` | the same; `filterMode` takes `ui.InputFieldFilterMode.*` and reads back equal to it. `visibility` other than `VISIBLE` is the agent's refusal |
+| `InputField.content`, `.filterMode`, `.maxLength` (read), `:Setup(visibility, filter, maxLength)` | the same; `content` of a restricted (password) field reads `""`, as Jagex's; `filterMode` takes `ui.InputFieldFilterMode.*` and reads back equal to it. `visibility` other than `VISIBLE` is the agent's refusal |
 | `Slider.value`, `:SetValue(v)`, `:Setup(max, curValue)`, `.minValue`, `.maxValue` | the same; `Setup(max, cur)` is `0..max` in steps of 1. **A set never raises `ONSELECTIONCHANGED`** (see below) |
-| `ComboField:SetEntries(entries, selectedID?)`, `:Add`, `:Remove`, `:Clear`, `:Select`, `:UnselectAll`, `:HasEntry`, `.entries`, `.numEntries`, `.selectedID`, `.hasSelection`, `.selectedLabel` | the same; `entries` as `{ "a", "b" }` (ids 1..n), `{ a = 7 }` (label -> id) or `{ { id =, text = } }` |
-| `List:SetEntries`, `:Add`, `:Clear`, `:UnselectAll`, `:SetEntrySelected(id, sel)`, `:GetEntrySelected`, `:GetEntryEnabled`, `:GetEntryVisible`, `:HasEntry`, `.entries`, `.selectedEntries`, `.numSelectedEntries`, `.maxSelected` | the same. A limit L > 1 holds at most L − 1 selected entries (the client's rule, measured on 951-4) |
+| `ComboField:SetEntries(entries, selectedID?)`, `:Add`, `:Remove`, `:Clear`, `:Select`, `:UnselectAll`, `:HasEntry`, `.entries`, `.numEntries`, `.selectedID`, `.hasSelection`, `.selectedLabel` | the same; `entries` as `{ "a", "b" }` (ids 1..n), `{ a = 7 }` (label -> id) or `{ { id =, text = } }`. An entry is `{ id, text }`; its `selectable` has no wire form and raises "not supported yet". `Remove` of the selected entry leaves nothing selected (`selectedID == -1`) |
+| `List:SetEntries`, `:Add`, `:Clear`, `:UnselectAll`, `:SetEntrySelected(id, sel)`, `:GetEntrySelected`, `:GetEntryEnabled`, `:GetEntryVisible`, `:HasEntry`, `.entries`, `.selectedEntries`, `.numSelectedEntries`, `.maxSelected` | the same. A new list is single-select (`maxSelected == 1`): `SetEntrySelected(id, true)` replaces the selection and `UnselectAll` does nothing, as in Jagex's. A limit L > 1 holds at most L − 1 selected entries (the client's rule, measured on 951-4) |
 | hooks `ONCLICK`, `ONRELEASE`, `ONMOUSEOVER`, `ONMOUSELEAVE` | `fn(comp, x, y, event)`, component-relative |
 | `ONBUTTONPRESSED` (button, check) | `fn(comp, current, previous, event)`, 0/1 |
-| `ONCONTENTCHANGED` (input field) | `fn(comp, reason, content, event)`; `reason` is `ui.InputFieldActionResult.*` (CONTENT_CHANGE 0, ERROR 1, SUBMIT 2, SUBMIT_ON_ESCAPE 3, SUBMIT_ON_FOCUS_LOSS 4); `content` is nil on a restricted field |
+| `ONCONTENTCHANGED` (input field) | `fn(comp, reason, content, event)`; `reason` is `ui.InputFieldActionResult.*` (CONTENT_CHANGE 0, ERROR 1, SUBMIT 2, SUBMIT_ON_ESCAPE 3, SUBMIT_ON_FOCUS_LOSS 4; `NONE` is -1 and never delivered); `content` is nil on a restricted field |
 | `ONSELECTIONCHANGED` (slider) | `fn(comp, value, 1, event)` |
 | `ONSELECTIONCHANGED` (combo field, list) | `fn(comp, entryID, selectionEvent, event)`; `ui.SelectionChangeEvent.*` (DESELECTED 0, SELECTED 1, ERROR_MAX_SELECTED 2, ERROR_NOT_SELECTABLE 3) |
 
@@ -135,7 +135,9 @@ takes all four together: `min < max`, `0 < step <= max - min`, `(max - min) % st
 (not even its text) until a background sprite is known, and in the world there is usually none to
 copy, so expect `renders == false`. Content, events and focus work regardless.
 
-**Subscriptions.** The first callback for a hook sends one `ui.subscribe`; removing the last one
+**Subscriptions.** `Subscribe(hook, fn)` without an id is the hook's one default callback: subscribing
+again replaces it, and `Unsubscribe(hook)` removes it. Callbacks with an id sit beside it.
+The first callback for a hook sends one `ui.subscribe`; removing the last one
 sends `ui.unsubscribe`. The agent's refusal (`ui: hook not valid for this type`, a Jagex handle)
 raises and keeps nothing. A component that is gone — destroyed, released at the end of the run,
 taken down by the game, or missing after an overflow — takes its subscriptions with it: no
@@ -223,6 +225,15 @@ host had to drop. On an overflow the framework logs it, asks the agent for this 
 handles (`ui.list`), and forgets every held component the agent no longer lists, running its
 `DESTROYED` callbacks with reason `unknown`. One read hands over at most 32 events, so the
 framework reads again until a read comes back short.
+
+**When callbacks run.** Events are read (and callbacks run) only at these points, never in the
+background. In a `bot.run` that is while `sleep_ticks` waits and before each `on_loop`, so a long
+blocking call in the script delays every callback until it returns. Meanwhile the host keeps a
+bounded queue: if it overflows, the oldest events are dropped, a click or a selection among them,
+and the drop is logged (the `overflow` event above). Once `on_stop` has returned (or the run
+crashed), the end-of-run release runs no more click, content or selection callbacks; `DESTROYED`
+callbacks still run with reason `released`. A callback that itself sleeps or calls `ui:poll()`
+gets nothing from that nested read; the remaining events stay in order for the outer one.
 
 They are read without waiting, from three places:
 

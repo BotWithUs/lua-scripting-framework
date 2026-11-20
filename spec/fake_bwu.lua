@@ -348,7 +348,17 @@ local UI_LATER_PROPS = {
   vis_mode = "ui prop not supported yet: vis_mode (a non-zero mode marks the field restricted)",
 }
 M.UI_LATER_PROPS = UI_LATER_PROPS
-M.UI_CHECK_LABEL = "ui prop not supported yet: label (a check's text sub-object is not mapped)"
+-- Refusal texts as the agent's (NXTLibrary a17edc4, src/rpc/UiWidgetProps.cpp, UiRegistry.cpp).
+M.UI_CHECK_LABEL = "ui prop not supported yet: label on check (its text sub-object is not mapped)"
+M.UI_LIST_LIMIT = "ui: more ids selected than the list's selection_limit allows (limit 1: one; limit L > 1: L - 1)"
+M.UI_SLIDER_VALUE = "ui: slider value refused (needs min <= value <= max and value % step == 0)"
+M.UI_RESTRICTED_READ = "ui: content of a restricted component cannot be read"
+M.UI_RESTRICTED_SET = "ui: content of a restricted component cannot be set"
+local UI_APPLIES = { entries = "ui: entries apply to combo_field and list components only",
+                     min = "ui: min / max / step / ticks apply to slider components only",
+                     max = "ui: min / max / step / ticks apply to slider components only",
+                     step = "ui: min / max / step / ticks apply to slider components only",
+                     ticks = "ui: min / max / step / ticks apply to slider components only" }
 local UI_PROPS = { x = "integer", y = "integer", width = "integer", height = "integer",
                    rgba = "integer", clickthrough = "boolean", line_width = "integer",
                    line_invert = "boolean", fill = "boolean", outline_thickness = "integer",
@@ -759,13 +769,13 @@ function M.install_ui(bwu, opts)
       local mn, mx, st, tk = props.min, props.max, props.step, props.ticks
       if not (mn < mx and st > 0 and st <= mx - mn and (mx - mn) % st == 0 and tk > 0
               and tk <= mx - mn) then
-        return "ui: slider setup refused by the client"
+        return "ui: slider setup refused (min < max, 0 < step <= max - min, (max - min) % step == 0, 0 < ticks <= max - min)"
       end
     end
     if c.type_name == "slider" and props.value ~= nil then
       local mn, mx, st = merged.min or 0, merged.max or 0, merged.step or 1
       if props.value < mn or props.value > mx or (props.value - mn) % st ~= 0 then
-        return "ui: slider value refused by the client"
+        return M.UI_SLIDER_VALUE
       end
     end
     return nil
@@ -776,23 +786,25 @@ function M.install_ui(bwu, opts)
     for _, e in ipairs(merged.entries or {}) do ids[e.id] = true end
     if c.type_name == "combo_field" then
       if math.type(props.selected) ~= "integer" then return BAD_VALUE end
-      if props.selected ~= -1 and not ids[props.selected] then return "ui: no entry with that id" end
+      if props.selected ~= -1 and not ids[props.selected] then
+        return "ui: selected names no entry of this combo_field"
+      end
       return nil
     end
     if type(props.selected) ~= "table" then return BAD_VALUE end
     local limit = merged.selection_limit or 1
     if #props.selected > (limit > 1 and limit - 1 or 1) then
-      return "ui: more entries selected than selection_limit allows"
+      return M.UI_LIST_LIMIT
     end
     for _, id in ipairs(props.selected) do
-      if not ids[id] then return "ui: no entry with that id" end
+      if not ids[id] then return "ui: selected names no entry of this list" end
     end
     return nil
   end
   -- The P2 rules that need the component's state. `merged` is its state after the call.
   local function check_widget(c, props, merged)
     if props.toggled ~= nil and not merged.can_toggle then
-      return "ui: toggled needs a button that can toggle"
+      return "ui: toggled needs a button that can toggle (set can_toggle: true)"
     end
     if props.filter ~= nil and not UI_FILTERS[props.filter] then return BAD_VALUE end
     if props.max_length ~= nil and (props.max_length < 1 or props.max_length > 9999) then
@@ -819,8 +831,9 @@ function M.install_ui(bwu, opts)
       if k == "text" and c.type_name ~= "text" then return "ui: text applies to text components only" end
       local fits = UI_PROP_TYPES[k]
       if fits and not fits[c.type_name] then
-        return "ui: " .. k .. " applies to " .. next(fits) .. " components only"
+        return UI_APPLIES[k] or ("ui: " .. k .. " applies to " .. next(fits) .. " components only")
       end
+      if k == "content" and c.restricted then return M.UI_RESTRICTED_SET end
       merged[k] = v
     end
     return check_widget(c, props or {}, merged)
@@ -939,6 +952,7 @@ function M.install_ui(bwu, opts)
       if t ~= "text" and t ~= "input_field" then
         return refuse("ui: content is readable on text components only")
       end
+      if c.restricted then return refuse(M.UI_RESTRICTED_READ) end
       r.content, r.content_truncated = (t == "text" and pr.text or pr.content) or "", false
     end
     if not c.jagex and not opts_p1 then ui.widget_readback(c, r) end
@@ -1146,6 +1160,8 @@ function M.install_ui(bwu, opts)
     return true
   end
   function ui.focus(handle) ui.comps[handle].focused = true end
+  -- The client flags a component restricted (a password field): its content is refused.
+  function ui.restrict(handle) ui.comps[handle].restricted = true end
   function ui.set_entry_flags(handle, id, flags)
     local c = ui.comps[handle]
     c.entry_flags = c.entry_flags or {}

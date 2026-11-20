@@ -9,7 +9,7 @@
 --   BWU_SMOKE_OUT   a file this script writes its results to, one "key=value" per line
 --
 -- Under TOPLEVEL_V2__GAME_AREA (1477:61) it makes a panel holding a button, a check, a slider,
--- a list and an input field, sets values and reads them back, then subscribes ONSELECTIONCHANGED
+-- a list (selection limit 3), an input field and a default (single-select) list, sets values and reads them back, then subscribes ONSELECTIONCHANGED
 -- on the slider and the list and ONCONTENTCHANGED on the input field, and sets values again
 -- through the script API. The client raises hook 50 for a content set, so a typed
 -- ONCONTENTCHANGED callback must run with (reason CONTENT_CHANGE, content). A slider value or a
@@ -17,7 +17,7 @@
 -- ONSELECTIONCHANGED and the driver checks there were none. No click: the only click path is a
 -- debug-only agent verb, which scripts never use.
 -- It writes the panel's key and "ready=1", runs until BWU_SMOKE_OUT .. ".go" exists, and ends
--- WITHOUT destroying or unsubscribing anything: bot.run's end must release the six components
+-- WITHOUT destroying or unsubscribing anything: bot.run's end must release the seven components
 -- (one ui.destroy_all) and with them their subscriptions (no ui.unsubscribe).
 -- Raises (bwu_host exits non-zero) on any mismatch.
 
@@ -73,8 +73,11 @@ local function build(ui)
   local input = ui.InputField.new(panel)
   input:SetSize(200, 30)
   input:Setup(ui.TextContentVisibilityMode.VISIBLE, ui.InputFieldFilterMode.NONE, 20)
+  local single = ui.List.new(panel)   -- no selection_limit: the client's default
+  single:SetSize(200, 60)
+  single:SetEntries({ "Logs", "Oak logs" })
   return { panel = panel, button = button, check = check_box, slider = slider, list = list,
-           input = input }
+           input = input, single = single }
 end
 
 local function set_and_read(ui, c)
@@ -99,6 +102,15 @@ local function set_and_read(ui, c)
   check("input isFocused", c.input.isFocused, false)
   check("input maxLength", c.input.maxLength, 20)
   check("input filterMode", c.input.filterMode, ui.InputFieldFilterMode.NONE)
+  -- A default list is single-select: selecting another replaces; UnselectAll is a no-op.
+  check("single maxSelected", c.single.maxSelected, 1)
+  check("single select 1", c.single:SetEntrySelected(1, true), true)
+  check("single select 2", c.single:SetEntrySelected(2, true), true)
+  check("single selected count", c.single.numSelectedEntries, 1)
+  check("single entry 2 selected", c.single:GetEntrySelected(2), true)
+  c.single:UnselectAll()
+  check("single UnselectAll no-op", c.single:GetEntrySelected(2), true)
+  note("single_selected", table.concat(c.single.selectedIDs, ","))
   note("input_renders", c.input.renders)   -- reported as is: false is expected on 951-4
   note("input_font_id", c.input.fontID)
   note("input_sprite_id", c.input.spriteID)
