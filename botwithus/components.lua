@@ -30,8 +30,9 @@ local function found(reply, code)
   return reply
 end
 
--- The component at iface:comp, or nil when it does not exist. (For one slot of an item container,
--- the slot is a sub: read the container and its dynamic children, or use :component_ops with sub.)
+-- The component at iface:comp, or nil when it does not exist. One slot of an item container is a
+-- sub of it, which get_component cannot address: read the container with :interface_tree, or
+-- use :component_ops with the sub.
 function Components.get(rpc, iface, comp)
   return found(rpc("get_component", { iface = iface, comp = comp }))
 end
@@ -58,7 +59,11 @@ function Components.static_children(rpc, iface, comp)
   return reply.children or {}
 end
 
--- The ids of the children created at run time.
+-- One entry per child created at run time, so only the COUNT is useful. The agent reports each
+-- dynamic child's comp id, and a dynamic child carries its PARENT's comp id (the client tells them
+-- apart by sub id, which this reply does not carry), so every entry is normally `comp` itself.
+-- Never pass an entry to :component() expecting the child: use :interface_tree for the children's
+-- own data. (NXTLibrary src/game/Interfaces.cpp GetChildIds.)
 function Components.dynamic_children(rpc, iface, comp)
   local reply, code = rpc("get_dynamic_children", { iface = iface, comp = comp })
   if reply == nil then return nil, code end

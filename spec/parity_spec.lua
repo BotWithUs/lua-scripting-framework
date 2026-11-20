@@ -148,7 +148,8 @@ local function component_rpc()
       return { mask = 0x102, ops = { { op = 1, name = "Craft", transmits = true } }, sub = p.sub }
     end,
     get_static_children = function() return { children = { 1, 2, 3 } } end,
-    get_dynamic_children = function() return { children = { 0 } } end,
+    -- As the agent answers: one entry per dynamic child, each the parent's comp id.
+    get_dynamic_children = function() return { children = { 5, 5 } } end,
     get_interface_tree = function() return { count = 1, nodes = { { iface = 1473, parent = -1 } } } end,
     find_component_at = function(p) return p.x == 110 and COMPONENT or { iface = -1 } end,
     get_components = function(p) return { components = { COMPONENT, { iface = -1 } }, n = #p.targets } end,
@@ -172,7 +173,7 @@ end
 T["children, tree, component_at and components"] = function(assert_)
   local g = attach({ rpc = component_rpc() })
   assert_(table.concat(g:static_children(1473, 5), ",") == "1,2,3", "static")
-  assert_(table.concat(g:dynamic_children(1473, 5), ",") == "0", "dynamic")
+  assert_(#g:dynamic_children(1473, 5) == 2, "dynamic: a count")
   assert_(g:interface_tree(1473, 0).nodes[1].parent == -1, "tree")
   assert_(g:component_at(110, 210).comp == 5 and g:component_at(1, 1) == nil, "at")
   local many = g:components({ { 1473, 5 }, { 1, 1 } })
