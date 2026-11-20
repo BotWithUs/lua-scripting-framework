@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **Plugin UI P2: interactive components and hook subscriptions (`botwithus.game_ui`, needs an
+  agent from NXTLibrary a17edc4 and a native host with `bwu.ui_subscribe`, native-scripting-host
+  7bb38a4; no protocol change).** Additive: every P1 script runs unchanged.
+  - `ui.Button`, `ui.Check`, `ui.InputField`, `ui.Slider`, `ui.ComboField`, `ui.List`,
+    `ui.Panel`, `ui.Grid`, Jagex-shaped (`label`, `isToggled`, `value`, `content`, `filterMode`,
+    `Setup`, `SetValue`, `SetEntries`, `Add`, `Remove`, `Select`, `SetEntrySelected`, ...) plus
+    `comp.enabled`; ours: `InputField:Blur()`, `.isFocused`, `.renders`, `Slider:SetRange`.
+  - `comp:Subscribe(ui.Hook.X, fn)` for ONCLICK, ONRELEASE, ONMOUSEOVER, ONMOUSELEAVE,
+    ONBUTTONPRESSED, ONCONTENTCHANGED, ONSELECTIONCHANGED, with Jagex's arguments
+    (`fn(self, x, y)`, `fn(self, current, previous)`, ...) and a typed `event.args` record.
+    `ui.InputFieldActionResult`, `ui.SelectionChangeEvent`, `ui.InputFieldFilterMode`,
+    `ui.TextContentVisibilityMode`.
+  - A gone component takes its subscriptions with it: no `ui.unsubscribe` for it, and
+    `Unsubscribe` on it succeeds. The end of a run is still one `ui.destroy_all`.
+  - A default list is single-select (selecting another replaces; `UnselectAll` is a no-op);
+    `Subscribe(hook, fn)` without an id replaces the hook's default callback; no click, content
+    or selection callback runs once `on_stop` has returned or the run crashed; a callback that
+    polls or sleeps does not reorder events; a restricted input field's content reads `""`.
+  - Tests: `spec/game_ui_p2_spec.lua` (fake agent P2 rules; `ui_p1 = true` plays an older host);
+    live: `tests/live/ui_smoke_p2.lua`.
+
 - **Host ABI 7: cache definitions, world map elements, avoid areas and route links (needs a native
   host at `BWU_ABI_VERSION` 7; wire v25 unchanged).** On an older host each raises naming ABI 7.
   - `botwithus.definitions` (`bot.Definitions`): `item` / `npc` / `loc` (names, ops, stackable,

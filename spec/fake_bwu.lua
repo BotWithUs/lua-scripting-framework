@@ -304,7 +304,7 @@ function M.new(opts)
     plain_detach(h)
   end
 
-  if not opts.no_ui then M.install_ui(bwu) end
+  if not opts.no_ui then M.install_ui(bwu, opts) end
   if (opts.abi or 7) >= 5 then M.install_abi5(bwu, opts) end
   if (opts.abi or 7) >= 6 then M.install_abi6(bwu, opts) end
   if (opts.abi or 7) >= 7 then M.install_abi7(bwu, opts) end
@@ -330,21 +330,67 @@ local UI_UNKNOWN   = "ui: unknown handle (destroyed, invalidated or not yours)"
 local UI_UNKNOWN_PARENT = "ui: unknown parent handle (destroyed, invalidated or not yours)"
 M.UI_FORBIDDEN, M.UI_READ_ONLY, M.UI_UNKNOWN = UI_FORBIDDEN, UI_READ_ONLY, UI_UNKNOWN
 
-local UI_TYPES = { line = 0, rectangle = 1, text = 2, canvas = 8, layer = 20 }
-local UI_LATER_TYPES = { sprite = true, button = true, model = true, panel = true, grid = true,
-                         input_field = true, check = true, slider = true, combo_field = true,
-                         list = true }
+local UI_TYPES = { line = 0, rectangle = 1, text = 2, canvas = 8, button = 9, check = 10, list = 11,
+                   input_field = 12, slider = 13, combo_field = 14, layer = 20, panel = 21, grid = 22 }
+local UI_P2_TYPES = { button = true, check = true, list = true, input_field = true, slider = true,
+                      combo_field = true, panel = true, grid = true }
+local UI_LATER_TYPES = { sprite = true, model = true }
 local UI_FORBIDDEN_PROPS = { op_config = true, opConfig = true, ops = true, drag_config = true,
                              dragConfig = true, target = true, target_config = true,
                              targetConfig = true, swipe_config = true, pinch_config = true,
                              cursor_config = true, params_config = true, flag_restricted = true }
-local UI_LATER_PROPS = { hidden = true, enabled = true, font = true, sprite = true }
+local UI_LATER_PROPS = {
+  hidden = "ui prop not supported yet: hidden",
+  font = "ui prop not supported yet: font",
+  sprite = "ui prop not supported yet: sprite",
+  spacing = "ui prop not supported yet: spacing (panel spacing is not mapped)",
+  layout = "ui prop not supported yet: layout (grid layout fields are not pinned)",
+  vis_mode = "ui prop not supported yet: vis_mode (a non-zero mode marks the field restricted)",
+}
+M.UI_LATER_PROPS = UI_LATER_PROPS
+-- Refusal texts as the agent's (NXTLibrary a17edc4, src/rpc/UiWidgetProps.cpp, UiRegistry.cpp).
+M.UI_CHECK_LABEL = "ui prop not supported yet: label on check (its text sub-object is not mapped)"
+M.UI_LIST_LIMIT = "ui: more ids selected than the list's selection_limit allows (limit 1: one; limit L > 1: L - 1)"
+M.UI_SLIDER_VALUE = "ui: slider value refused (needs min <= value <= max and value % step == 0)"
+M.UI_RESTRICTED_READ = "ui: content of a restricted component cannot be read"
+M.UI_RESTRICTED_SET = "ui: content of a restricted component cannot be set"
+local UI_APPLIES = { entries = "ui: entries apply to combo_field and list components only",
+                     min = "ui: min / max / step / ticks apply to slider components only",
+                     max = "ui: min / max / step / ticks apply to slider components only",
+                     step = "ui: min / max / step / ticks apply to slider components only",
+                     ticks = "ui: min / max / step / ticks apply to slider components only" }
 local UI_PROPS = { x = "integer", y = "integer", width = "integer", height = "integer",
                    rgba = "integer", clickthrough = "boolean", line_width = "integer",
                    line_invert = "boolean", fill = "boolean", outline_thickness = "integer",
                    text = "string", x_parent_pc = "float", x_self_pc = "float",
                    y_parent_pc = "float", y_self_pc = "float", width_pc = "float",
-                   height_pc = "float" }
+                   height_pc = "float", enabled = "boolean",
+                   -- P2 (NXTLibrary a17edc4)
+                   label = "string", can_toggle = "boolean", toggled = "boolean",
+                   checked = "boolean", content = "string", filter = "string",
+                   max_length = "integer", min = "integer", max = "integer", step = "integer",
+                   ticks = "integer", value = "integer", entries = "table",
+                   selected = "any", selection_limit = "integer", vertical = "boolean" }
+-- The types a P2 prop applies to, for the agent's "applies to" refusal.
+local UI_PROP_TYPES = { label = { button = true }, can_toggle = { button = true },
+                        toggled = { button = true }, checked = { check = true },
+                        content = { input_field = true }, filter = { input_field = true },
+                        max_length = { input_field = true }, min = { slider = true },
+                        max = { slider = true }, step = { slider = true }, ticks = { slider = true },
+                        value = { slider = true }, entries = { combo_field = true, list = true },
+                        selected = { combo_field = true, list = true },
+                        selection_limit = { list = true }, vertical = { panel = true } }
+local UI_FILTERS = { none = true, alphanumeric = true, numeric = true, quantity = true,
+                     numbers_as_text = true }
+-- The hooks ui.subscribe takes, and the types each fits (false: every type).
+local UI_HOOKS = { onclick = false, onrelease = false, onmouseover = false, onmouseleave = false,
+                   onbuttonpressed = { button = true, check = true },
+                   oncontentchanged = { input_field = true },
+                   onselectionchanged = { slider = true, combo_field = true, list = true } }
+local UI_CONTENT_REASONS = { [0] = "content_change", "error", "submit", "submit_on_escape",
+                             "submit_on_focus_loss" }
+local UI_SELECTION_EVENTS = { [0] = "deselected", "selected", "error_max_selected",
+                              "error_not_selectable" }
 local UI_CANVAS_ARGS = {
   line = { "x", "y", "end_x", "end_y", "thickness", "rgba" },
   outline = { "x", "y", "width", "height", "thickness", "rgba" },
@@ -671,15 +717,20 @@ function M.install_abi7(bwu, opts)
 end
 
 local function ui_type_ok(kind, v)
+  if kind == "any" then return v ~= nil end
   if kind == "float" then return math.type(v) == "float" end
   if kind == "integer" then return math.type(v) == "integer" end
   return type(v) == kind
 end
 
-function M.install_ui(bwu)
+-- opts.ui_p1 = true installs the P1 surface only (no ui_subscribe / ui_unsubscribe / ui_blur, and
+-- the interactive types refused), as a host before native-scripting-host 7bb38a4.
+function M.install_ui(bwu, opts)
+  opts = opts or {}
   local ui = { next_handle = 100, comps = {}, calls = {}, events = {}, used = {},
                jagex = { ["1477:61"] = true }, timeout = false }
   bwu._ui = ui
+  local opts_p1 = opts.ui_p1
   bwu.UI_KEY_STATIC, bwu.UI_DEFAULT, bwu.UI_CANVAS_OPS_MAX, bwu.UI_LIST_MAX = -1, -1, 128, 256
 
   local function record(fn, ...) ui.calls[#ui.calls + 1] = { fn = fn, args = { ... } } end
@@ -707,22 +758,98 @@ function M.install_ui(bwu)
     end
     return true
   end
+  local BAD_VALUE = "ui: prop value has the wrong type or is out of range"
+  local function check_slider(c, props, merged)
+    local n = 0
+    for _, k in ipairs({ "min", "max", "step", "ticks" }) do
+      if props[k] ~= nil then n = n + 1 end
+    end
+    if n > 0 and n < 4 then return "ui: slider min, max, step and ticks go together" end
+    if n == 4 then
+      local mn, mx, st, tk = props.min, props.max, props.step, props.ticks
+      if not (mn < mx and st > 0 and st <= mx - mn and (mx - mn) % st == 0 and tk > 0
+              and tk <= mx - mn) then
+        return "ui: slider setup refused (min < max, 0 < step <= max - min, (max - min) % step == 0, 0 < ticks <= max - min)"
+      end
+    end
+    if c.type_name == "slider" and props.value ~= nil then
+      local mn, mx, st = merged.min or 0, merged.max or 0, merged.step or 1
+      if props.value < mn or props.value > mx or (props.value - mn) % st ~= 0 then
+        return M.UI_SLIDER_VALUE
+      end
+    end
+    return nil
+  end
+  local function check_selected(c, props, merged)
+    if props.selected == nil then return nil end
+    local ids = {}
+    for _, e in ipairs(merged.entries or {}) do ids[e.id] = true end
+    if c.type_name == "combo_field" then
+      if math.type(props.selected) ~= "integer" then return BAD_VALUE end
+      if props.selected ~= -1 and not ids[props.selected] then
+        return "ui: selected names no entry of this combo_field"
+      end
+      return nil
+    end
+    if type(props.selected) ~= "table" then return BAD_VALUE end
+    local limit = merged.selection_limit or 1
+    if #props.selected > (limit > 1 and limit - 1 or 1) then
+      return M.UI_LIST_LIMIT
+    end
+    for _, id in ipairs(props.selected) do
+      if not ids[id] then return "ui: selected names no entry of this list" end
+    end
+    return nil
+  end
+  -- The P2 rules that need the component's state. `merged` is its state after the call.
+  local function check_widget(c, props, merged)
+    if props.toggled ~= nil and not merged.can_toggle then
+      return "ui: toggled needs a button that can toggle (set can_toggle: true)"
+    end
+    if props.filter ~= nil and not UI_FILTERS[props.filter] then return BAD_VALUE end
+    if props.max_length ~= nil and (props.max_length < 1 or props.max_length > 9999) then
+      return BAD_VALUE
+    end
+    if props.selection_limit ~= nil and (props.selection_limit < 1 or props.selection_limit > 255) then
+      return BAD_VALUE
+    end
+    return check_slider(c, props, merged) or check_selected(c, props, merged)
+  end
   local function check_props(c, props)
+    local merged = {}
+    for k, v in pairs(c.props) do merged[k] = v end
     for k, v in pairs(props or {}) do
       if UI_FORBIDDEN_PROPS[k] then return UI_FORBIDDEN end
-      if UI_LATER_PROPS[k] then return "ui prop not supported yet: " .. k end
+      if UI_LATER_PROPS[k] then return UI_LATER_PROPS[k] end
+      if k == "label" and c.type_name == "check" then return M.UI_CHECK_LABEL end
       local kind = UI_PROPS[k]
       if not kind then return "ui: unknown prop" end
-      if not ui_type_ok(kind, v) then return "ui: prop value has the wrong type or is out of range" end
+      if not ui_type_ok(kind, v) then return BAD_VALUE end
       if (k == "line_width" or k == "line_invert") and c.type_name ~= "line" then
         return "ui: line_width / line_invert apply to line components only"
       end
       if k == "text" and c.type_name ~= "text" then return "ui: text applies to text components only" end
+      local fits = UI_PROP_TYPES[k]
+      if fits and not fits[c.type_name] then
+        return UI_APPLIES[k] or ("ui: " .. k .. " applies to " .. next(fits) .. " components only")
+      end
+      if k == "content" and c.restricted then return M.UI_RESTRICTED_SET end
+      merged[k] = v
     end
-    return nil
+    return check_widget(c, props or {}, merged)
   end
   local function apply(c, props)
     for k, v in pairs(props or {}) do c.props[k] = v end
+    if not props then return end
+    if props.min ~= nil and props.value == nil then c.props.value = props.min end
+    if props.entries ~= nil and props.selected == nil then
+      c.props.selected = c.type_name == "list" and {} or -1
+    end
+    -- The client raises oncontentchanged for a content set too (reason 0).
+    if props.content ~= nil and c.subs and c.subs.oncontentchanged then
+      push(c.owner, { handle = c.handle, hook = "oncontentchanged", reason = "content_change",
+                      truncated = false, reason_code = 0, content = props.content })
+    end
   end
   -- Remove a component and (as the game does) its children, which are announced to their owner
   -- as parent_gone. With `reason`, the component itself is announced too.
@@ -770,7 +897,9 @@ function M.install_ui(bwu)
     if not begin("ui_create", h, parent, type_name, props, opts) then return timed_out() end
     local p = owned(h, parent)
     if not p then return refuse(UI_UNKNOWN_PARENT) end
-    if UI_LATER_TYPES[type_name] then return refuse("ui type not supported yet: " .. type_name) end
+    if UI_LATER_TYPES[type_name] or (opts_p1 and UI_P2_TYPES[type_name]) then
+      return refuse("ui type not supported yet: " .. type_name)
+    end
     if not UI_TYPES[type_name] then return refuse("ui: unknown type") end
     opts = opts or {}
     if opts.category == 0 then return refuse("ui: bad_param category (1..234)") end
@@ -820,10 +949,56 @@ function M.install_ui(bwu)
     r.outline_thickness = t == "rectangle" and (pr.outline_thickness or 1) or -1
     r.use_count, r.op_flags_read, r.op_mask, r.op_target = 2, true, 0, -1
     if with_content then
-      if t ~= "text" then return refuse("ui: content is readable on text components only") end
-      r.content, r.content_truncated = pr.text or "", false
+      if t ~= "text" and t ~= "input_field" then
+        return refuse("ui: content is readable on text components only")
+      end
+      if c.restricted then return refuse(M.UI_RESTRICTED_READ) end
+      r.content, r.content_truncated = (t == "text" and pr.text or pr.content) or "", false
     end
+    if not c.jagex and not opts_p1 then ui.widget_readback(c, r) end
     return r
+  end
+
+  -- The interactive keys, only for the type that has them (as the binding's push_ui_widget).
+  local function choice_readback(c, r)
+    local pr, is_list = c.props, c.type_name == "list"
+    local sel = {}
+    for _, id in ipairs(is_list and pr.selected or {}) do sel[id] = true end
+    r.entries = {}
+    for i, e in ipairs(pr.entries or {}) do
+      r.entries[i] = { id = e.id, text = e.text, truncated = false }
+      if is_list then
+        local fl = (c.entry_flags or {})[e.id] or {}
+        r.entries[i].hidden, r.entries[i].disabled = fl.hidden or false, fl.disabled or false
+        r.entries[i].selected = sel[e.id] or false
+      end
+    end
+    if is_list then
+      r.selected = table.move(pr.selected or {}, 1, #(pr.selected or {}), 1, {})
+      r.selection_limit = pr.selection_limit or 1
+    else
+      r.selected = pr.selected or -1
+    end
+  end
+  function ui.widget_readback(c, r)
+    local pr, t = c.props, c.type_name
+    r.enabled = pr.enabled ~= false
+    if t == "button" then
+      r.label, r.label_truncated = pr.label or "", false
+      r.can_toggle, r.toggled = pr.can_toggle or false, pr.toggled or false
+    elseif t == "check" then
+      r.checked = pr.checked or false
+    elseif t == "input_field" then
+      r.focused, r.filter, r.max_length = c.focused or false, pr.filter or "none", pr.max_length or 80
+      r.font_id, r.sprite_id, r.renders = 495, -1, false
+    elseif t == "slider" then
+      r.min, r.max, r.value = pr.min or 0, pr.max or 0, pr.value or 0
+      r.step, r.ticks = pr.step or 1, pr.ticks or 1
+    elseif t == "combo_field" or t == "list" then
+      choice_readback(c, r)
+    elseif t == "panel" then
+      r.vertical = pr.vertical or false
+    end
   end
 
   local function check_op(op)
@@ -917,7 +1092,85 @@ function M.install_ui(bwu)
     return list
   end
 
+  if not opts_p1 then
+    function bwu.ui_subscribe(h, handle, hook)
+      if not begin("ui_subscribe", h, handle, hook) then return timed_out() end
+      local c = owned(h, handle)
+      if c and c.jagex then return refuse(UI_READ_ONLY) end
+      if not c then return refuse(UI_UNKNOWN) end
+      local fits = UI_HOOKS[hook]
+      if fits == nil then return refuse("ui: hook not supported (" .. tostring(hook) .. ")") end
+      if fits and not fits[c.type_name] then return refuse("ui: hook not valid for this type") end
+      c.subs = c.subs or {}
+      c.subs[hook] = true
+      return true
+    end
+
+    -- As the host: a handle it no longer tracks (gone, released) is not sent, and answers false.
+    function bwu.ui_unsubscribe(h, handle, hook)
+      local c = owned(h, handle)
+      if not c then
+        record("ui_unsubscribe_unsent", h, handle, hook)
+        return false
+      end
+      if not begin("ui_unsubscribe", h, handle, hook) then return timed_out() end
+      local was = (c.subs and c.subs[hook]) or false
+      if c.subs then c.subs[hook] = nil end
+      return was
+    end
+
+    function bwu.ui_blur(h, handle)
+      if not begin("ui_blur", h, handle) then return timed_out() end
+      local c, err = editable(h, handle)
+      if not c then return refuse(err) end
+      if c.type_name ~= "input_field" then
+        return refuse("ui: blur applies to input_field components only")
+      end
+      local had = c.focused or false
+      c.focused = false
+      return had
+    end
+  end
+
   -- Test hooks ------------------------------------------------------------------------------
+  -- A client Event for a subscribed hook, as the host decodes it: mouse x, y; current,
+  -- previous; reason_code (+ reason), content; a slider's value; a combo / list entry_id,
+  -- selection_event (+ reason). A nil content arrives as false, as the binding sends a NIL
+  -- payload value. `raw = { ... }` sends arg0, arg1, ... instead (a shape the host did not
+  -- decode). Queued only while the hook is subscribed; returns whether it was.
+  function ui.fire(handle, hook, a, b, raw)
+    local c = ui.comps[handle]
+    if not (c and c.subs and c.subs[hook]) then return false end
+    local ev = { handle = handle, hook = hook, reason = "", truncated = false }
+    if raw then
+      for i, v in ipairs(raw) do ev["arg" .. (i - 1)] = v end
+    elseif hook == "onbuttonpressed" then
+      ev.current, ev.previous = a, b
+    elseif hook == "oncontentchanged" then
+      ev.reason_code, ev.reason = a, UI_CONTENT_REASONS[a] or ""
+      if b == nil then ev.content = false else ev.content = b end
+    elseif hook == "onselectionchanged" and c.type_name == "slider" then
+      ev.value = a
+    elseif hook == "onselectionchanged" then
+      ev.entry_id, ev.selection_event, ev.reason = a, b, UI_SELECTION_EVENTS[b] or ""
+    else
+      ev.x, ev.y = a, b
+    end
+    push(c.owner, ev)
+    return true
+  end
+  function ui.focus(handle) ui.comps[handle].focused = true end
+  -- The client flags a component restricted (a password field): its content is refused.
+  function ui.restrict(handle) ui.comps[handle].restricted = true end
+  function ui.set_entry_flags(handle, id, flags)
+    local c = ui.comps[handle]
+    c.entry_flags = c.entry_flags or {}
+    c.entry_flags[id] = flags
+  end
+  function ui.subscribed(handle, hook)
+    local c = ui.comps[handle]
+    return c ~= nil and c.subs ~= nil and c.subs[hook] == true
+  end
   function ui.game_destroy(handle, reason) return remove(handle, reason or "removed") end
   function ui.overflow(h, n)
     push(h, { handle = 0, hook = "overflow", reason = "", truncated = false, dropped = n })
