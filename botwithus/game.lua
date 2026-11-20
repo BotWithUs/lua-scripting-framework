@@ -10,6 +10,9 @@ local Actions = require("botwithus.actions")
 local Orientation = require("botwithus.orientation")
 local Variables = require("botwithus.variables")
 local Events = require("botwithus.events")
+local Inventory = require("botwithus.inventory")
+local Skills = require("botwithus.skills")
+local Components = require("botwithus.components")
 
 -- Resolve the surface each call. `_G.bwu` is set by the host (or a test fake).
 -- host(self), further down, is the guard every per-client call goes through.
@@ -220,6 +223,15 @@ end
 --               tile; do not assume they are equal when idle, forced movement moves it first.
 --               x, y and plane are -1 when unknown (out of the world, or unreadable, which is
 --               normal on the beta client channel).
+-- Host ABI 5 adds, each meaningful only while `valid`:
+--   is_member        true on a members account
+--   target_index     server index of the entity you are interacting with, -1 for none
+--   target_type      the client's raw tag for what kind of entity that is
+--   moving           true while you are moving
+--   stance_id        your render (stance) animation set
+--   spot_anim_id     first active spot anim (graphic), -1 for none
+--   following_index  server index you are following, -1 for none
+-- Out of the world the flags read false and the ids -1. An older host leaves them all nil.
 function Game:self()
   return with_facing(surface().self(host(self)))
 end
@@ -230,6 +242,10 @@ end
 --                   for an NPC with no morph; -1 when the morph resolves to nothing (the NPC
 --                   is hidden). It is never replaced by type_id.
 --   combat_level    the per-instance combat level the client shows
+-- Host ABI 5 adds animation_id (-1 when not animating), hp and max_hp (raw, as the client
+-- holds them; max_hp 0 means unknown, and then hp means nothing: health_ratio stays -1 there),
+-- spot_anim_id, stance_id, following_index (-1 for none) and moving. Player rows gain the same
+-- last four. An older host leaves them nil.
 function Game:npcs()
   local raw = surface().npcs(host(self))
   for _, n in ipairs(raw) do with_facing(n) end
@@ -364,6 +380,141 @@ function Game:objects()
   end
   return out
 end
+
+-- ---- Host ABI 5 reads: skills, inventories, ground items, projectiles, session, raw ----
+--
+-- The native host gained these at BWU_ABI_VERSION 5 (no wire change). On an older host each
+-- raises naming the ABI it needs, rather than reading nil.
+
+-- The surface function `name`, or a raise blaming the script's call.
+local function abi5(name)
+  local b = surface()
+  local fn = b[name]
+  if type(fn) ~= "function" then
+    error(("botwithus: this native host has no %s (needs host ABI 5, it has ABI %s);"
+      .. " update the host"):format(name, tostring(b.ABI_VERSION)), 3)
+  end
+  return fn
+end
+
+-- Whether the native host has the ABI 5 reads below.
+function Game:has_abi5_reads()
+  return type(surface().skills) == "function"
+end
+
+-- The local player's skills: { {skill_id, name, xp, level, boosted_level}, ... }. Empty out of
+-- the world. See botwithus.skills for where the ids come from.
+function Game:skills()
+  return Skills.named(abi5("skills")(host(self)))
+end
+
+-- One skill by id or name ("woodcutting", Skills.WOODCUTTING), or nil when the player has none
+-- (out of the world). An unknown name raises.
+function Game:skill(which)
+  return Skills.find(self:skills(), which)
+end
+
+-- The inventories published this frame: { {inv_id, slot_count}, ... }.
+function Game:inventories()
+  return abi5("inventories")(host(self))
+end
+
+-- A view of inventory `inv_id` (botwithus.inventory). Not published reads as :is_present()
+-- false, never as an empty inventory.
+function Game:inventory(inv_id)
+  return Inventory.new(inv_id, abi5("inventory")(host(self), inv_id))
+end
+
+function Game:backpack()  return self:inventory(Inventory.BACKPACK) end
+function Game:equipment() return self:inventory(Inventory.EQUIPMENT) end
+-- Published only while the bank interface is open: check :is_present().
+function Game:bank()      return self:inventory(Inventory.BANK) end
+
+-- Ground-item stacks in the loaded scene: { {item_id, quantity, tile}, ... }, unfiltered.
+-- type_id is an alias of item_id so the query's :of_type() works (bot.ground_items(game)).
+function Game:ground_items()
+  local rows = abi5("ground_items")(host(self))
+  for _, g in ipairs(rows) do
+    g.tile = Tile.from(g.tile)
+    g.type_id = g.item_id
+  end
+  return rows
+end
+
+-- Projectiles in flight. Each row: projectile_id (its graphic id), start_cycle and end_cycle
+-- (game_cycle units, the ~20ms clock: compare them with game:clocks().game_cycle, never with
+-- server_tick), source_index / target_index (-1 when that end is a tile), source_type /
+-- target_type (the client's raw entity tags), and start_tile / end_tile.
+function Game:projectiles()
+  local rows = abi5("projectiles")(host(self))
+  for _, p in ipairs(rows) do
+    p.start_tile = Tile.from(p.start_tile)
+    p.end_tile = Tile.from(p.end_tile)
+  end
+  return rows
+end
+
+-- Game states, as game_state() and login_state() report them.
+Game.STATE_NONE    = 0    -- the client is still starting
+Game.STATE_LOGIN   = 10
+Game.STATE_LOBBY   = 20
+Game.STATE_IN_GAME = 30
+
+-- From the snapshot, no round trip: { game_state, root_iface_id, own_index (-1 with no
+-- player), scene_version (changes when the loaded map squares do: a cache key, not a clock) }.
+function Game:game_state()
+  return abi5("game_state")(host(self))
+end
+
+-- In the world with a player, from the snapshot.
+function Game:is_logged_in()
+  local g = self:game_state()
+  return g.game_state == Game.STATE_IN_GAME and g.own_index >= 0
+end
+
+-- One round trip each. On a refusal or no answer they return nil, code.
+-- { state, login_progress, login_status }: the two codes are the client's own, passed through.
+function Game:login_state()
+  return abi5("login_state")(host(self))
+end
+
+-- The world id, -1 between worlds.
+function Game:current_world()
+  return abi5("current_world")(host(self))
+end
+
+-- { display_name, jx_display_name, account_name, account_uuid, logged_in, is_member, game_state,
+-- text_truncated }. display_name is "" until the client knows it. account_name and game_state
+-- are newer: an older agent leaves them "" and -1. text_truncated is a bit set: 1
+-- display_name, 2 jx_display_name, 4 account_name, 8 account_uuid were cut to fit.
+function Game:account_info()
+  return abi5("account_info")(host(self))
+end
+
+-- Any agent RPC: `params` a table (or nil), the reply as Lua tables. nil, code when the agent
+-- refuses or does not answer. The long tail: prefer a typed read where there is one.
+function Game:rpc_raw(method, params)
+  return abi5("rpc_raw")(host(self), method, params)
+end
+
+-- The raw front snapshot frame (wire v25 layout), as a string for string.unpack. A fresh copy
+-- per call. The layout is the agent's, and changes with the protocol version.
+function Game:snapshot_bytes()
+  return abi5("snapshot_bytes")(host(self))
+end
+
+-- Component reads (botwithus.components): one round trip each, nil, code on a refusal.
+local function rpc_of(self)
+  return function(method, params) return self:rpc_raw(method, params) end
+end
+
+function Game:component(iface, comp) return Components.get(rpc_of(self), iface, comp) end
+function Game:components(targets) return Components.get_many(rpc_of(self), targets) end
+function Game:component_ops(iface, comp, sub) return Components.ops(rpc_of(self), iface, comp, sub) end
+function Game:static_children(iface, comp) return Components.static_children(rpc_of(self), iface, comp) end
+function Game:dynamic_children(iface, comp) return Components.dynamic_children(rpc_of(self), iface, comp) end
+function Game:interface_tree(iface, comp) return Components.tree(rpc_of(self), iface, comp) end
+function Game:component_at(x, y) return Components.at(rpc_of(self), x, y) end
 
 -- Open-interface types (wire v23), mirroring BWU_OPEN_IFACE_TYPE_* on the native surface:
 -- the client's raw open type, clamped. Observed on client 950-1: MODAL closes when the player

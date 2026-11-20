@@ -112,6 +112,11 @@ function Entities.hint_arrows(game)
   return new_query(function() return game:hint_arrows() or {} end)
 end
 
+-- Ground-item stacks over a Game facade; :of_type() matches the item id. Needs host ABI 5.
+function Entities.ground_items(game)
+  return new_query(function() return game:ground_items() end)
+end
+
 Entities.Query = Query
 Entities.normalize_name = Query.normalize_name
 Entities.names_equal = Query.names_equal

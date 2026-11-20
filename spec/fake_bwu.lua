@@ -74,7 +74,7 @@ function M.new(opts)
     var_calls = {},
     defaults_status = opts.defaults_status or 1,
   }
-  local bwu = { PROTOCOL_VERSION = opts.protocol_version or 25, ABI_VERSION = 4, MAX_ACTION_BATCH = 128, _state = state,
+  local bwu = { PROTOCOL_VERSION = opts.protocol_version or 25, ABI_VERSION = opts.abi or 5, MAX_ACTION_BATCH = 128, _state = state,
                 -- BWU_VARP_* / BWU_VAR_KIND_* as native-scripting-host exports them
                 VARP_UNAVAILABLE = 0, VARP_DEFAULT_NOT_SET_CLIENTSIDE = 1, VARP_SET = 2,
                 VARP_NO_SUCH_VARP = 3, VAR_KIND_UNKNOWN = -1, VAR_KIND_INT = 0, VAR_KIND_LONG = 1,
@@ -94,33 +94,23 @@ function M.new(opts)
   function bwu.detach(h) state.detaches[#state.detaches + 1] = h.pid end
   function bwu.refresh(_) state.tick = state.tick + 1; state.seq = state.seq + 30; return true end
   function bwu.clocks(_) return { server_tick = state.tick, game_cycle = state.tick * 30, publish_seq = state.seq } end
-  function bwu.self(_)
-    local s = state.self_
-    return { valid = s.valid, tile = { x = s.tile.x, y = s.tile.y, plane = s.tile.plane },
-             server_index = s.server_index, combat_level = s.combat_level,
-             health = s.health, max_health = s.max_health, orientation = s.orientation,
-             run_energy = s.run_energy, run_weight = s.run_weight,
-             server_tile = copy_tile_or_nil(s.server_tile) }
+  -- A row as the native embed hands it over: a fresh table, tiles copied, every other field
+  -- as the fixture has it (so an ABI 5 field is there only when the fixture sets it).
+  local function copy_row(r)
+    local out = {}
+    for k, v in pairs(r) do out[k] = type(v) == "table" and copy_tile_or_nil(v) or v end
+    return out
   end
+  function bwu.self(_) return copy_row(state.self_) end
   function bwu.npcs(_)
     local out = {}
-    for i, n in ipairs(state.npcs_) do
-      out[i] = { server_index = n.server_index, type_id = n.type_id,
-                 tile = { x = n.tile.x, y = n.tile.y, plane = n.tile.plane },
-                 health_ratio = n.health_ratio, orientation = n.orientation,
-                 active_type_id = n.active_type_id, combat_level = n.combat_level }
-    end
+    for i, n in ipairs(state.npcs_) do out[i] = copy_row(n) end
     return out
   end
   local function copy_tile(t) return { x = t.x, y = t.y, plane = t.plane } end
   function bwu.players(_)
     local out = {}
-    for i, p in ipairs(state.players_) do
-      out[i] = { server_index = p.server_index, tile = copy_tile(p.tile),
-                 animation_id = p.animation_id, combat_level = p.combat_level,
-                 orientation = p.orientation, name = p.name, name_truncated = p.name_truncated,
-                 server_tile = copy_tile_or_nil(p.server_tile) }
-    end
+    for i, p in ipairs(state.players_) do out[i] = copy_row(p) end
     return out
   end
   -- player_appearance: opts.appearances maps server_index -> reply table, or -> a string
@@ -315,6 +305,7 @@ function M.new(opts)
   end
 
   if not opts.no_ui then M.install_ui(bwu) end
+  if (opts.abi or 5) >= 5 then M.install_abi5(bwu, opts) end
   if opts.no_cm then return bwu end
   M.install_cm(bwu, opts)
   return bwu
@@ -368,6 +359,96 @@ local UI_STALL_MS = 5000
 -- The most events one bwu.ui_poll_events call hands over (the binding's batch).
 local UI_POLL_BATCH = 32
 M.UI_POLL_BATCH = UI_POLL_BATCH
+
+-- ---- host ABI 5: the typed reads, rpc_raw and snapshot_bytes ----
+-- opts.skills / inventories (inv id -> list of {item_id, quantity}, one per slot) /
+-- ground_items / projectiles / game_state / login_state / world / account replace the
+-- defaults below. A session read given a string plays the agent refusing with that code.
+-- opts.rpc maps method -> function(params) returning the reply (or nil, code); an unlisted
+-- method is nil, "unknown_method". Every rpc_raw call is recorded in bwu._abi5.rpc_calls.
+local function abi5_defaults(opts)
+  return {
+    skills = opts.skills or {
+      { skill_id = 8, xp = 1234567, level = 72, boosted_level = 70 },
+      { skill_id = 14, xp = 101333, level = 50, boosted_level = 52 },
+    },
+    inventories = opts.inventories or {
+      [93] = { { item_id = 1511, quantity = 1 }, { item_id = 995, quantity = 1000 },
+               { item_id = 1511, quantity = 1 }, { item_id = -1, quantity = 0 } },
+      [94] = { { item_id = -1, quantity = 0 }, { item_id = 1351, quantity = 1 } },
+    },
+    ground_items = opts.ground_items or {
+      { item_id = 526, quantity = 1, tile = { x = 3202, y = 3200, plane = 0 } },
+      { item_id = 995, quantity = 50, tile = { x = 3210, y = 3200, plane = 0 } },
+    },
+    projectiles = opts.projectiles or {
+      { projectile_id = 1234, start_cycle = 5000, end_cycle = 5060, source_index = 55,
+        source_type = 1, target_index = 1000, target_type = 0,
+        start_tile = { x = 3201, y = 3201, plane = 0 }, end_tile = { x = 3200, y = 3200, plane = 0 } },
+    },
+    game_state = opts.game_state or { game_state = 30, root_iface_id = 1477, own_index = 1000,
+                                      scene_version = 42 },
+    login_state = opts.login_state or { state = 30, login_progress = 7, login_status = 2 },
+    world = opts.world or 84,
+    account = opts.account or { display_name = "Me", jx_display_name = "", account_name = "acct",
+                                account_uuid = "dev_uuid", logged_in = true, is_member = true,
+                                game_state = 30, text_truncated = 0 },
+    rpc = opts.rpc or {},
+    rpc_calls = {},
+  }
+end
+
+local function session_reply(v)
+  if type(v) == "string" then return nil, v end
+  return v
+end
+
+function M.install_abi5(bwu, opts)
+  local st = abi5_defaults(opts)
+  bwu._abi5 = st
+  bwu.INV_BACKPACK, bwu.INV_EQUIPMENT, bwu.INV_BANK = 93, 94, 95
+  function bwu.skills(_) return st.skills end
+  function bwu.inventories(_)
+    local out = {}
+    for id, slots in pairs(st.inventories) do out[#out + 1] = { inv_id = id, slot_count = #slots } end
+    table.sort(out, function(a, b) return a.inv_id < b.inv_id end)
+    return out
+  end
+  function bwu.inventory(_, id)
+    local slots = st.inventories[id]
+    if slots == nil then return nil end
+    local out = {}
+    for i, s in ipairs(slots) do out[i] = { slot = i - 1, item_id = s.item_id, quantity = s.quantity } end
+    return out
+  end
+  function bwu.ground_items(_)
+    local out = {}
+    for i, g in ipairs(st.ground_items) do
+      out[i] = { item_id = g.item_id, quantity = g.quantity, tile = copy_tile_or_nil(g.tile) }
+    end
+    return out
+  end
+  function bwu.projectiles(_)
+    local out = {}
+    for i, p in ipairs(st.projectiles) do
+      local row = {}
+      for k, v in pairs(p) do row[k] = type(v) == "table" and copy_tile_or_nil(v) or v end
+      out[i] = row
+    end
+    return out
+  end
+  function bwu.game_state(_) return st.game_state end
+  function bwu.login_state(_) return session_reply(st.login_state) end
+  function bwu.current_world(_) return session_reply(st.world) end
+  function bwu.account_info(_) return session_reply(st.account) end
+  function bwu.rpc_raw(_, method, params)
+    st.rpc_calls[#st.rpc_calls + 1] = { method = method, params = params }
+    local handler = st.rpc[method]
+    if handler == nil then return nil, "unknown_method" end
+    return handler(params)
+  end
+  function bwu.snapshot_bytes(_) return opts.snapshot_bytes or string.pack("<I8i4i4i4", 5000, 30, 1000, 1477) end
+end
 
 local function ui_type_ok(kind, v)
   if kind == "float" then return math.type(v) == "float" end
