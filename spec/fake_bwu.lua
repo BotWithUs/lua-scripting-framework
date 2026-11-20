@@ -74,7 +74,7 @@ function M.new(opts)
     var_calls = {},
     defaults_status = opts.defaults_status or 1,
   }
-  local bwu = { PROTOCOL_VERSION = opts.protocol_version or 25, ABI_VERSION = opts.abi or 5, MAX_ACTION_BATCH = 128, _state = state,
+  local bwu = { PROTOCOL_VERSION = opts.protocol_version or 25, ABI_VERSION = opts.abi or 6, MAX_ACTION_BATCH = 128, _state = state,
                 -- BWU_VARP_* / BWU_VAR_KIND_* as native-scripting-host exports them
                 VARP_UNAVAILABLE = 0, VARP_DEFAULT_NOT_SET_CLIENTSIDE = 1, VARP_SET = 2,
                 VARP_NO_SUCH_VARP = 3, VAR_KIND_UNKNOWN = -1, VAR_KIND_INT = 0, VAR_KIND_LONG = 1,
@@ -305,7 +305,8 @@ function M.new(opts)
   end
 
   if not opts.no_ui then M.install_ui(bwu) end
-  if (opts.abi or 5) >= 5 then M.install_abi5(bwu, opts) end
+  if (opts.abi or 6) >= 5 then M.install_abi5(bwu, opts) end
+  if (opts.abi or 6) >= 6 then M.install_abi6(bwu, opts) end
   if opts.no_cm then return bwu end
   M.install_cm(bwu, opts)
   return bwu
@@ -448,6 +449,87 @@ function M.install_abi5(bwu, opts)
     return handler(params)
   end
   function bwu.snapshot_bytes(_) return opts.snapshot_bytes or string.pack("<I8i4i4i4", 5000, 30, 1000, 1477) end
+end
+
+-- ---- host ABI 6: GE offers, worlds and hop, target mode and use-on, projection, children with
+-- sub ids, scripts ----
+-- Replies have the native embed's shapes (native-scripting-host src/embed_lua_client.c). Every
+-- call is recorded in bwu._abi6.calls as { fn, args... }. opts.ge_offers / world_list /
+-- target_mode / hop replace a reply; a string plays the agent refusing with that code.
+local function abi6_defaults(opts)
+  local offers = {}
+  for slot = 0, 7 do
+    offers[slot + 1] = { slot = slot, stage = 0, stage_name = "empty", type = 0, type_name = "buy",
+                         item_id = 0, item_count = 0, sold_count = 0, price = 0, gold_from_sale = 0 }
+  end
+  offers[3] = { slot = 2, stage = 2, stage_name = "added", type = 1, type_name = "sell", item_id = 1511,
+                item_count = 500, sold_count = 120, price = 5000000000, gold_from_sale = 600000000000 }
+  return {
+    ge = opts.ge_offers or { market = 0, offers = offers },
+    worlds = opts.world_list or { count = 2, total = 2, skipped = 0, truncated = false, worlds = {
+      { id = 1, flags = 0x89, activity = "Trade - Members", location_id = 2,
+        location_name = "United Kingdom", population = 1234, ping = 0 },
+      { id = 2, flags = 0x400000, activity = "Classic", location_id = 0,
+        location_name = "United States (east)", population = 777, ping = 0 },
+    } },
+    target = opts.target_mode or { active = false, is_item = false, obj_id = -1, verb = "", name = "",
+                                   target_mask = 0 },
+    hop = opts.hop,
+    calls = {},
+  }
+end
+
+local function reply_or_code(v)
+  if type(v) == "string" then return nil, v end
+  return v
+end
+
+function M.install_abi6(bwu, opts)
+  local st = abi6_defaults(opts)
+  bwu._abi6 = st
+  local function record(...) st.calls[#st.calls + 1] = table.pack(...) end
+  bwu.WORLD_FLAG_MEMBERS, bwu.WORLD_FLAG_SKILL_TOTAL = 0x1, 0x80
+  bwu.WORLD_FLAG_CLASSIC_ONLY, bwu.WORLD_FLAG_EOC_ONLY = 0x400000, 0x800000
+  function bwu.ge_offers(_) record("ge_offers"); return reply_or_code(st.ge) end
+  function bwu.world_list(_) record("world_list"); return reply_or_code(st.worlds) end
+  function bwu.set_world(_, id)
+    record("set_world", id)
+    return { started = id ~= 999, reason = id == 999 and "unknown_world" or "" }
+  end
+  function bwu.hop_world(_, id, timeout_ms)
+    record("hop_world", id, timeout_ms)
+    if type(st.hop) == "string" then
+      return nil, st.hop, { started = false, world_id = 1, game_state = 30, elapsed_ms = 3, reason = st.hop }
+    end
+    return { started = true, world_id = id, game_state = 30, elapsed_ms = 4200, reason = "" }
+  end
+  function bwu.target_mode(_) record("target_mode"); return reply_or_code(st.target) end
+  function bwu.use_on_component(_, src, dst) record("use_on_component", src, dst); return true end
+  function bwu.use_on_npc(_, src, idx) record("use_on_npc", src, idx); return true end
+  function bwu.use_on_object(_, src, loc, x, y) record("use_on_object", src, loc, x, y); return true end
+  function bwu.world_to_screen(_, tiles)
+    record("world_to_screen", tiles)
+    local points = {}
+    for i, t in ipairs(tiles) do
+      points[i] = t.plane == nil and { result = "ok", on_screen = true, x = 641, y = 359 }
+                  or { result = "wrong_plane", on_screen = false }
+    end
+    return { viewport = { x = 8, y = 30, width = 1264, height = 682 }, points = points }
+  end
+  function bwu.static_children(_, iface, comp)
+    record("static_children", iface, comp)
+    return { { comp = 6, sub = -1 }, { comp = 7, sub = -1 } }
+  end
+  function bwu.dynamic_children(_, iface, comp)
+    record("dynamic_children", iface, comp)
+    return { { comp = comp, sub = 0 }, { comp = comp, sub = 1 } }
+  end
+  function bwu.script_handle(_, id) record("script_handle", id); return id == 4321 and 0x100000001 or 0 end
+  function bwu.execute_script(_, handle, ints, strs, returns)
+    record("execute_script", handle, ints, strs, returns)
+    return { 42 }
+  end
+  function bwu.destroy_script_handle(_, handle) record("destroy_script_handle", handle); return true end
 end
 
 local function ui_type_ok(kind, v)

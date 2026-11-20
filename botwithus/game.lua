@@ -13,6 +13,9 @@ local Events = require("botwithus.events")
 local Inventory = require("botwithus.inventory")
 local Skills = require("botwithus.skills")
 local Components = require("botwithus.components")
+local GrandExchange = require("botwithus.grand_exchange")
+local Worlds = require("botwithus.worlds")
+local Target = require("botwithus.target")
 
 -- Resolve the surface each call. `_G.bwu` is set by the host (or a test fake).
 -- host(self), further down, is the guard every per-client call goes through.
@@ -515,6 +518,132 @@ function Game:static_children(iface, comp) return Components.static_children(rpc
 function Game:dynamic_children(iface, comp) return Components.dynamic_children(rpc_of(self), iface, comp) end
 function Game:interface_tree(iface, comp) return Components.tree(rpc_of(self), iface, comp) end
 function Game:component_at(x, y) return Components.at(rpc_of(self), x, y) end
+
+-- ---- Host ABI 6: GE offers, worlds and hop, target mode and use-on, projection, children with
+-- sub ids, scripts (NXTLibrary 0f746b4; PUBLIC_PROTOCOL.md 6.2.1, 6.2.2, 6.3.1, 6.7, 6.8) ----
+--
+-- The native host gained these at BWU_ABI_VERSION 6. On an older host each raises naming the ABI
+-- it needs. A refusal or no answer is nil, code (the agent's code verbatim, or "rpc_timeout").
+
+local function abi6(name)
+  local b = surface()
+  local fn = b[name]
+  if type(fn) ~= "function" then
+    error(("botwithus: this native host has no %s (needs host ABI 6, it has ABI %s);"
+      .. " update the host"):format(name, tostring(b.ABI_VERSION)), 3)
+  end
+  return fn
+end
+
+-- Whether the native host has the ABI 6 calls below.
+function Game:has_abi6_calls()
+  return type(surface().ge_offers) == "function"
+end
+
+-- The eight GE slots of market 0 (botwithus.grand_exchange): each with in_use (stage ~= 0).
+function Game:ge_offers()
+  local reply, code = abi6("ge_offers")(host(self))
+  if reply == nil then return nil, code end
+  return GrandExchange.decorate(reply)
+end
+
+-- The world list (botwithus.worlds): { worlds, count, total, skipped, truncated, is_fetched }.
+-- An empty list (is_fetched false) means the game has not fetched it yet, not an error.
+function Game:world_list()
+  local reply, code = abi6("world_list")(host(self))
+  if reply == nil then return nil, code end
+  return Worlds.decorate_list(reply)
+end
+
+-- One set_world: { started, reason }. started false is a refusal ("unknown_world",
+-- "members_world", "hop_in_progress", ...), not an error. :hop_world waits for the arrival.
+function Game:set_world(world_id)
+  return abi6("set_world")(host(self), world_id)
+end
+
+-- How long :hop_world waits by default. In the world a hop takes 3-6 s; the agent gives up
+-- after 15 s waiting for the world's row and 20 s waiting for the world.
+Game.HOP_TIMEOUT_MS = 30000
+
+-- set_world, then wait until the client reports `world_id` with its state back at the lobby
+-- (20) or the world (30). Returns { started, world_id, game_state, elapsed_ms, reason } on
+-- arrival, or nil, code, that table: code is set_world's reason when it refused, or
+-- "hop_world: not arrived in time" (or "stopped" on a GUI stop).
+function Game:hop_world(world_id, timeout_ms)
+  return abi6("hop_world")(host(self), world_id, timeout_ms or Game.HOP_TIMEOUT_MS)
+end
+
+-- { active, is_item, obj_id, source = {iface, comp, sub} or nil, verb, name, target_mask }.
+function Game:target_mode()
+  return abi6("target_mode")(host(self))
+end
+
+-- Use-on (botwithus.target): true when both actions are queued, or nil, code.
+function Game:use_on_component(source, target)
+  return abi6("use_on_component")(host(self), source, target)
+end
+
+function Game:use_on_npc(source, server_index)
+  return abi6("use_on_npc")(host(self), source, server_index)
+end
+
+function Game:use_on_object(source, loc_id, tile_x, tile_y)
+  return abi6("use_on_object")(host(self), source, loc_id, tile_x, tile_y)
+end
+
+-- Backpack slot on backpack slot (the knife in 0 on the logs in 3: use_item_on_item(0, 3)).
+function Game:use_item_on_item(slot, target_slot)
+  return self:use_on_component(Target.backpack(slot), Target.backpack(target_slot))
+end
+
+function Game:use_item_on_npc(slot, server_index)
+  return self:use_on_npc(Target.backpack(slot), server_index)
+end
+
+-- Take loc_id and the tile from the same objects() row.
+function Game:use_item_on_object(slot, loc_id, tile_x, tile_y)
+  return self:use_on_object(Target.backpack(slot), loc_id, tile_x, tile_y)
+end
+
+-- Project tile centres to window client pixels, 1..64 per call. `tiles` holds Tiles or
+-- {x, y[, plane]}; a tile with no plane is taken on the local player's plane. Returns
+-- { viewport = {x, y, width, height} or nil, points = { {result, on_screen, x, y}, ... } }:
+-- on_screen is the predicate per point; result is "ok", "off_viewport" (x, y real but outside
+-- the viewport), "behind_camera", "unavailable" or "wrong_plane" (x, y nil for the last three).
+function Game:world_to_screen(tiles)
+  local plain = {}
+  for i, t in ipairs(tiles) do
+    plain[i] = { x = t.x, y = t.y, plane = t.plane }
+  end
+  return abi6("world_to_screen")(host(self), plain)
+end
+
+-- The children of iface:comp as { {comp, sub}, ... }. A DYNAMIC child's comp is its parent's id:
+-- sub tells the children apart and is the param2 of a COMPONENT or SELECT_COMPONENT_ITEM action
+-- on it (for the backpack, the slot). Use these instead of the count-only :dynamic_children.
+function Game:static_children_with_sub(iface, comp)
+  return abi6("static_children")(host(self), iface, comp)
+end
+
+function Game:dynamic_children_with_sub(iface, comp)
+  return abi6("dynamic_children")(host(self), iface, comp)
+end
+
+-- CS2 scripts. :script_handle(id) -> handle (0: not acquired). :execute_script(handle, int_args,
+-- string_args, returns) -> { value, ... }: at most 16 args together and 255 bytes per string
+-- (more raises, nothing is sent); returns = { "int" | "long" | "string", ... }, and a string
+-- return reads "". An empty list back means the run failed (a bad handle).
+function Game:script_handle(script_id)
+  return abi6("script_handle")(host(self), script_id)
+end
+
+function Game:execute_script(handle, int_args, string_args, returns)
+  return abi6("execute_script")(host(self), handle, int_args, string_args, returns)
+end
+
+function Game:destroy_script_handle(handle)
+  return abi6("destroy_script_handle")(host(self), handle)
+end
 
 -- Open-interface types (wire v23), mirroring BWU_OPEN_IFACE_TYPE_* on the native surface:
 -- the client's raw open type, clamped. Observed on client 950-1: MODAL closes when the player
