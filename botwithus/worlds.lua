@@ -13,7 +13,7 @@
 
 local Worlds = {}
 
--- The bits resolved live on client 951-4 (NXTLibrary PUBLIC_PROTOCOL.md 6.2.1).
+-- The bits resolved live on client 951-4.
 Worlds.FLAG_MEMBERS      = 0x1
 Worlds.FLAG_SKILL_TOTAL  = 0x80
 Worlds.FLAG_CLASSIC_ONLY = 0x400000

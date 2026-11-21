@@ -1,8 +1,8 @@
 -- spec/input_spec.lua -- the input dialog: exact key packing on the wire, and input refused
 -- before it is sent.
 --
--- The packed vectors are the agent's (NXTLibrary Actions.h ComponentTrigger, scenario
--- iface-input-bank-x): 1469:4 is p1 96272388, a top-level key trigger is p2 720895,
+-- The packed vectors are the agent's:
+-- 1469:4 is p1 96272388, a top-level key trigger is p2 720895,
 -- (-1, '3') is p3 -65485 and Enter (84, 0) is 5505024. The Python suite pins the same vectors.
 
 local fake_bwu = require("spec.fake_bwu")

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 — 2026-11-21
 
 - **Tests: the fake host drops queued events on unsubscribe (no framework change).**
   `spec/fake_bwu.lua`'s `ui_unsubscribe` now discards that hook's queued events for the handle
@@ -13,11 +13,11 @@
 - **Docs: unsubscribing and the end-of-run release (no code change).** `docs/UI.md` now says that
   an answered `ui.unsubscribe` makes the host discard that hook's events not read yet, so a click
   made just before `Unsubscribe` may be lost, and what still happens to events the framework has
-  already read. It also says that a native host from `61e65ab` on sends no second
+  already read. It also says that native host 1.1.0 and later send no second
   `ui.destroy_all` at detach after the framework's own release.
 
 - **Native host ABI 8: gameval names, a millisecond clock, pause from the GUI, a settings store,
-  object animations** (native-scripting-host feat/n3-host-gaps).
+  object animations** (native host 1.1.0).
   - `botwithus.gameval`: the host's gameval index (`bwu.gameval_*`) by the Java `GamevalType`
     strings; `G.ref(type, name, fallback):id()`. Every pinned Java `GamevalRef` fallback id now
     resolves by its name first: the action bar (slot variables all of one bar or the generated
@@ -38,8 +38,8 @@
     `os.time()`, `save()` is false, "unsupported" and the GUI cannot pause the run.
 
 - **Plugin UI P2: interactive components and hook subscriptions (`botwithus.game_ui`, needs an
-  agent from NXTLibrary a17edc4 and a native host with `bwu.ui_subscribe`, native-scripting-host
-  7bb38a4; no protocol change).** Additive: every P1 script runs unchanged.
+  agent from this release and a native host with `bwu.ui_subscribe`, native host 1.1.0; no
+  protocol change).** Additive: every P1 script runs unchanged.
   - `ui.Button`, `ui.Check`, `ui.InputField`, `ui.Slider`, `ui.ComboField`, `ui.List`,
     `ui.Panel`, `ui.Grid`, Jagex-shaped (`label`, `isToggled`, `value`, `content`, `filterMode`,
     `Setup`, `SetValue`, `SetEntries`, `Add`, `Remove`, `Select`, `SetEntrySelected`, ...) plus
@@ -110,12 +110,12 @@
     area 28 (the main world) by default, `area_id` kept.
   - Walk options take `avoid = { ... }` (`botwithus.walk`: `area`, `box`, `around`, `contains`,
     `MAX_AVOID`); `game:path_route(x, y, plane, opts)` returns `{ steps, links }`
-    (`walk.teleports(route)`); `game:has_avoid()`. Refused, never ignored, on an older host or a
-    worldwalker.dll before WorldWalker #44.
+    (`walk.teleports(route)`); `game:has_avoid()`. Refused, never ignored, on an older host or an
+    older worldwalker.dll without avoid areas.
   - Tests: `spec/n2_spec.lua` (fake surface `install_abi7`; the fake defaults to ABI 7).
 
-- **Host ABI 6 calls (needs a native host at `BWU_ABI_VERSION` 6; wire v25 unchanged; the agent
-  RPCs of NXTLibrary 0f746b4).** On an older host each raises naming ABI 6;
+- **Host ABI 6 calls (needs a native host at `BWU_ABI_VERSION` 6; wire v25 unchanged; agent
+  RPCs from this release).** On an older host each raises naming ABI 6;
   `game:has_abi6_calls()` tells.
   - `game:ge_offers()`: the eight GE slots of market 0, each with `in_use` (`stage ~= 0`) and
     `is_sell` (`botwithus.grand_exchange`).
@@ -171,8 +171,8 @@
   `on(<kind>, fn)` for a service kind are unaffected.
 - **`Game:poll_events()` decodes `key_input` (type 30).** `Events.KEY_INPUT`, `Events.KEY_INPUT_SIZE`
   and a decoder returning `{ type, name = "key_input", key, is_alt, is_ctrl, is_shift, synthetic,
-  text_input_focused, is_repeat }`. The three flags come from the body's last byte (NXTLibrary
-  PR #84, merged at `ee221d2`). Against an older agent they all read false. `text_input_focused`
+  text_input_focused, is_repeat }`. The three flags come from the body's last byte. Against an
+  older agent that does not send that byte they all read false. `text_input_focused`
   is set when a text field (chat, bank search, a prompt, a native input) had the keyboard, so
   scripts can ignore keys typed into text. A body shorter than 8 bytes comes back raw with
   `error`, as other events do.
