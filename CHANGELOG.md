@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Tests: the fake host drops queued events on unsubscribe (no framework change).**
+  `spec/fake_bwu.lua`'s `ui_unsubscribe` now discards that hook's queued events for the handle
+  once the agent answers, as the native host's `bwu_ui_unsubscribe` does, and keeps them when it
+  plays a timeout. Three specs in `spec/game_ui_p2_spec.lua` pin what `docs/UI.md` says: a queued
+  event is not delivered after the unsubscribe, events already read in the same batch still
+  reach `ui:on_event` and `ui:poll()`, and a timed-out unsubscribe keeps delivering to
+  `ui:on_event`.
+
 - **Docs: unsubscribing and the end-of-run release (no code change).** `docs/UI.md` now says that
   an answered `ui.unsubscribe` makes the host discard that hook's events not read yet, so a click
   made just before `Unsubscribe` may be lost, and what still happens to events the framework has
