@@ -47,10 +47,11 @@
 -- other script shares it. When a bot.run ends (or a GUI worker's run), the framework releases
 -- them with ONE ui.destroy_all on that connection, before it detaches, and every held component
 -- is forgotten as "released" (its DESTROYED callbacks run). One call, so a stalled agent costs
--- one timeout, not one per component. The host releases again at detach (finding nothing), and
--- the agent at pipe close. comp:Destroy() is the only per-handle destroy. A component the game
--- took down (its parent closed, logout) is announced by a "destroyed" event and forgotten, so
--- it is never destroyed twice; a Destroy that races that event is refused by the agent and
+-- one timeout, not one per component. A host from 61e65ab on sends no second ui.destroy_all at
+-- detach once that release emptied its records (an older one sends one that finds nothing); the
+-- agent releases what is left at pipe close. comp:Destroy() is the only per-handle destroy.
+-- A component the game took down (its parent closed, logout) is announced by a "destroyed"
+-- event and forgotten, so it is never destroyed twice; a Destroy that races that event is refused by the agent and
 -- treated the same way. After an "overflow" (events lost), the held handles are checked
 -- against ui.list and the missing ones forgotten with reason "unknown".
 --
@@ -67,6 +68,9 @@
 -- Subscriptions belong to the Game's connection, like the components. A component that is gone
 -- (destroyed, released, taken down by the game, or missing after an overflow) takes its
 -- subscriptions with it: no ui.unsubscribe is ever sent for it, and Unsubscribe on it succeeds.
+-- An answered ui.unsubscribe also makes the host discard that hook's events it had not handed
+-- over yet. Events already read (the rest of the current batch) run no Subscribe callback for a
+-- hook with none left, but still reach the ui:on_event listeners and ui:poll()'s result.
 
 local GameUi = {}
 
@@ -654,7 +658,8 @@ local function drop_hook(self, wire)
 end
 
 -- Unsubscribe(hook) removes the callback subscribed without an id; Unsubscribe(hook, id) the
--- one with that id. Removing the last one sends ui.unsubscribe, unless the component is gone.
+-- one with that id. Removing the last one sends ui.unsubscribe, unless the component is gone;
+-- the host then discards the hook's events not read yet, so a click just before may be lost.
 function Component:Unsubscribe(hook, id)
   if id == nil then id = DEFAULT_ID end
   local wire = wire_hook(hook) or hook

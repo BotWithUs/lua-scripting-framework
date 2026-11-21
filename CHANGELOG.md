@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Docs: unsubscribing and the end-of-run release (no code change).** `docs/UI.md` now says that
+  an answered `ui.unsubscribe` makes the host discard that hook's events not read yet, so a click
+  made just before `Unsubscribe` may be lost, and what still happens to events the framework has
+  already read. It also says that a native host from `61e65ab` on sends no second
+  `ui.destroy_all` at detach after the framework's own release.
+
 - **Native host ABI 8: gameval names, a millisecond clock, pause from the GUI, a settings store,
   object animations** (native-scripting-host feat/n3-host-gaps).
   - `botwithus.gameval`: the host's gameval index (`bwu.gameval_*`) by the Java `GamevalType`
