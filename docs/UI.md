@@ -144,6 +144,18 @@ taken down by the game, or missing after an overflow — takes its subscriptions
 `ui.unsubscribe` is sent for it, and `Unsubscribe` on it succeeds. The end of a run is still one
 `ui.destroy_all`.
 
+**Unsubscribing drops events still queued.** When the last callback for a hook goes
+(`Unsubscribe` or `UnsubscribeAll`) and the agent answers the `ui.unsubscribe`, the host also
+discards that hook's events for the component that arrived but were not read yet. So a click
+made just before you unsubscribe may never reach a callback. Events the framework had already
+read before you unsubscribed are not dropped. For example, a callback unsubscribes while later
+events of the same hook wait in the same read (up to 32 events). Those events run no
+`Subscribe` callback, but they still reach the `ui:on_event` listeners and the list that
+`ui:poll()` returns. Removing one callback while others remain sends nothing and drops nothing:
+the hook stays subscribed. A callback removed by an earlier callback of the same event still runs
+for that event, and not for later ones. If the `ui.unsubscribe` times out, the callbacks are gone
+anyway, but the host keeps the subscription, so the hook's events keep reaching `ui:on_event`.
+
 **Sets do not raise change hooks.** A slider value or a combo / list selection set through the
 agent never raises `ONSELECTIONCHANGED`; only a user's interaction does. So `triggerEvents = true`
 (`Slider:SetValue`, `ComboField:Select`, `List:SetEntrySelected`) raises `not supported yet`, and
@@ -205,8 +217,12 @@ Components belong to the Game's own connection to the agent; no other Game or sc
 it. When a `bot.run` (or a GUI run) ends, the framework releases them with **one**
 `ui.destroy_all` on that connection, before it detaches. One call, so a stalled agent costs a
 single timeout however many components there are. Every component it held is then forgotten as
-`released` and its `DESTROYED` callbacks run, whatever the agent answered. The host releases
-again when it detaches (finding nothing), and the agent when the connection closes. Because the
+`released` and its `DESTROYED` callbacks run, whatever the agent answered. When the host then
+detaches, it holds no component, so it sends no second `ui.destroy_all` (native host `61e65ab`
+or later; an older host sends one that finds nothing). The host still sends one if the agent may
+still hold a component: the framework's `ui.destroy_all` failed, or a ui call went unanswered
+after it. The agent releases
+whatever is left when the connection closes. Because the
 connection is the Game's own, another connection's components are never touched.
 `comp:Destroy()` is the only per-component destroy.
 
