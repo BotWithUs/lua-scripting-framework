@@ -1132,6 +1132,17 @@ function M.install_ui(bwu, opts)
     end
 
     -- As the host: a handle it no longer tracks (gone, released) is not sent, and answers false.
+    -- Once the agent answers, the host also discards that hook's events for the handle that it
+    -- queued but nobody polled yet (bwu_ui_unsubscribe). A timeout keeps the subscription, and
+    -- with it every queued event.
+    local function discard_queued(h, handle, hook)
+      local kept = {}
+      for _, ev in ipairs(ui.events[h] or {}) do
+        if not (ev.handle == handle and ev.hook == hook) then kept[#kept + 1] = ev end
+      end
+      ui.events[h] = kept
+    end
+
     function bwu.ui_unsubscribe(h, handle, hook)
       local c = owned(h, handle)
       if not c then
@@ -1141,6 +1152,7 @@ function M.install_ui(bwu, opts)
       if not begin("ui_unsubscribe", h, handle, hook) then return timed_out() end
       local was = (c.subs and c.subs[hook]) or false
       if c.subs then c.subs[hook] = nil end
+      discard_queued(h, handle, hook)
       return was
     end
 

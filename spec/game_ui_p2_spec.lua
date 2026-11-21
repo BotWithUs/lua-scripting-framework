@@ -552,6 +552,80 @@ T["p2: an Unsubscribe that times out raises kind timeout"] = function(assert_)
   assert_(err.kind == "timeout" and err.verb == "ui.unsubscribe", tostring(err))
 end
 
+-- Unsubscribing drops events still queued (docs/UI.md) ---------------------------------------
+
+-- Collects every ui event the on_event listeners see.
+local function listen(ui)
+  local seen = {}
+  ui:on_event(function(ev) seen[#seen + 1] = ev end)
+  return seen
+end
+
+T["p2: an answered unsubscribe drops that hook's events still queued in the host"] = function(assert_)
+  local _, _, ui, f, area = setup()
+  local b, other = ui.Button.new(area), ui.Button.new(area)
+  local calls = 0
+  b:Subscribe(ui.Hook.ONCLICK, function() calls = calls + 1 end)
+  b:Subscribe(ui.Hook.ONRELEASE, function() end)
+  other:Subscribe(ui.Hook.ONCLICK, function() end)
+  local seen = listen(ui)
+  assert_(f.fire(b.handle, "onclick", 1, 2), "queued before the unsubscribe")
+  assert_(f.fire(b.handle, "onrelease", 3, 4), "another hook of the same handle")
+  assert_(f.fire(other.handle, "onclick", 5, 6), "the same hook of another handle")
+  b:Unsubscribe(ui.Hook.ONCLICK)
+  assert_(#f.calls_of("ui_unsubscribe") == 1, "the agent answered the ui.unsubscribe")
+  local got = ui:poll()
+  assert_(calls == 0, "no callback ran for the dropped click")
+  assert_(#got == 2 and #seen == 2, "only the two other events arrive: " .. #got .. ", " .. #seen)
+  for _, ev in ipairs(seen) do
+    assert_(not (ev.handle == b.handle and ev.hook == "onclick"), "the queued click is gone")
+  end
+  assert_(seen[1].handle == b.handle and seen[1].hook == "onrelease"
+    and seen[2].handle == other.handle and seen[2].hook == "onclick", "the rest, in order")
+end
+
+T["p2: events already read in the batch still reach on_event and poll after an unsubscribe"] = function(assert_)
+  local _, _, ui, f, area = setup()
+  local b = ui.Button.new(area)
+  local calls = 0
+  b:Subscribe(ui.Hook.ONCLICK, function(self)
+    calls = calls + 1
+    self:Unsubscribe(ui.Hook.ONCLICK)   -- the first click unsubscribes
+  end)
+  local seen = listen(ui)
+  local batch = fake_bwu.UI_POLL_BATCH
+  for n = 1, batch + 1 do
+    assert_(f.fire(b.handle, "onclick", n, n), "queued " .. n)
+  end
+  local got = ui:poll()
+  assert_(calls == 1, "the callback ran for the first click only: " .. calls)
+  assert_(#f.calls_of("ui_unsubscribe") == 1, "one ui.unsubscribe, sent from the callback")
+  assert_(#got == batch and #seen == batch,
+    "the whole first read reaches poll and on_event: " .. #got .. ", " .. #seen)
+  for n, ev in ipairs(seen) do
+    assert_(ev.hook == "onclick" and ev.args.x == n, "click " .. n .. " in order")
+  end
+  assert_(#ui:poll() == 0 and #seen == batch, "the click left in the host was dropped")
+end
+
+T["p2: a timed-out unsubscribe keeps delivering the hook to on_event"] = function(assert_)
+  local _, _, ui, f, area = setup()
+  local b = ui.Button.new(area)
+  local calls = 0
+  b:Subscribe(ui.Hook.ONCLICK, function() calls = calls + 1 end)
+  local seen = listen(ui)
+  assert_(f.fire(b.handle, "onclick", 1, 1), "queued before the unsubscribe")
+  f.timeout = true
+  local err = raised(assert_, b.Unsubscribe, b, ui.Hook.ONCLICK)
+  assert_(err.kind == "timeout", tostring(err))
+  assert_(f.subscribed(b.handle, "onclick"), "the host keeps the subscription")
+  assert_(f.fire(b.handle, "onclick", 2, 2), "and the agent keeps pushing")
+  local got = ui:poll()
+  assert_(#got == 2 and #seen == 2, "both clicks reach poll and on_event: " .. #got .. ", " .. #seen)
+  assert_(seen[1].args.x == 1 and seen[2].args.x == 2, "in order")
+  assert_(calls == 0, "the callback is gone anyway")
+end
+
 -- Review fixes (F1-F5) ------------------------------------------------------------------------
 
 T["p2 F1: a default list is single-select: selecting another replaces, UnselectAll is a no-op"] = function(assert_)
