@@ -18,7 +18,7 @@ local Json = require("botwithus.json")
 
 local M = {}
 
--- bwu_host_surface.h BWU_CACHE_*: the type ids json / params take.
+-- The native host's BWU_CACHE_* values: the type ids json / params take.
 M.CACHE_ITEM     = 0
 M.CACHE_NPC      = 1
 M.CACHE_LOC      = 2

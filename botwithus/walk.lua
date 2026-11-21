@@ -4,7 +4,7 @@
 -- walk failed on, and the transition it last attempted as OBSERVED through its callbacks (the
 -- loc it tried to interact with, the NPC it tried to click, the chain steps it ran). Results
 -- and events are plain tables from bwu.walk_ex / walk_status / walk_wait / walk_events; field
--- meanings follow bwu_host_surface.h (BwuWalkResult / BwuWalkEvent / BwuWalkTransition).
+-- meanings follow the native host's walk result, event and transition records.
 --
 -- The values are restated here so a script can name them without the native surface.
 local M = {}
@@ -34,7 +34,7 @@ M.TX_NPC      = 2
 M.TX_CHAIN    = 3
 M.TX_TELEPORT = 4
 
--- Walk plan options (bwu_host_surface.h BWU_MOVE_*). MOVE_* are BIT NUMBERS: switch categories
+-- Walk plan options (the native host's BWU_MOVE_*). MOVE_* are BIT NUMBERS: switch categories
 -- off with disabled_moves = M.moves_mask(M.MOVE_DOORS, ...). RESTRICT_FREE_TO_PLAY is already a
 -- mask bit; add it to a mask with +, never twice.
 M.MOVE_DOORS         = 0
@@ -94,7 +94,7 @@ function M.has_event(events, kind)
   return false
 end
 
--- ---- Avoid areas and route links (native ABI 7, WorldWalker #44) ----
+-- ---- Avoid areas and route links (native ABI 7) ----
 --
 -- An avoid area is an inclusive tile rectangle the walker never routes through, as the table the
 -- options take: { min_x =, min_y =, max_x =, max_y =, plane = } (plane AREA_ALL_PLANES, -1, for

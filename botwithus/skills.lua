@@ -7,7 +7,7 @@
 -- boosts and drains included).
 --
 -- WHERE THE IDS COME FROM. The agent publishes the game's StatType id and no name. The table
--- below mirrors the sibling hosts' (python-scripting-framework api/skills.py, itself mirrored
+-- below mirrors the sibling hosts' (the Python framework's table, itself mirrored
 -- from the Java host's Skills.java). It is not read from the cache. A live read of a real account
 -- reported 29 skills, ATTACK..NECROMANCY, which matches it. If the game adds or reorders a
 -- skill, every copy of this table is wrong until edited: treat a surprising level as a reason to

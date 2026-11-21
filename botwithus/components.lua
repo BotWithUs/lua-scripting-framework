@@ -8,7 +8,7 @@
 -- tick. Each returns the agent's reply as Lua tables, or nil, code when the agent refuses or does
 -- not answer in time ("rpc timeout").
 --
--- A component map (NXTLibrary PUBLIC_PROTOCOL.md 6.7.1) carries iface, comp, sub, type (raw and
+-- A component map (the agent's component reply) carries iface, comp, sub, type (raw and
 -- build-specific: prefer category), category, x, y, w, h, text, hidden, sprite_id, item_id,
 -- item_amount, triggers ({ {type, script_id} }), visible (its own flag), visible_global (it and
 -- every parent: what "on screen" means), slot_flags, parent_global, scrollable and the scroll
@@ -64,8 +64,7 @@ end
 -- apart by sub id, which this reply does not carry), so every entry is normally `comp` itself.
 -- Never pass an entry to :component() expecting the child. On host ABI 6 use
 -- game:dynamic_children_with_sub(iface, comp), which returns { {comp, sub}, ... } (the sub
--- addresses each child), and :interface_tree for the children's own data. (NXTLibrary
--- src/game/Interfaces.cpp GetChildIds.)
+-- addresses each child), and :interface_tree for the children's own data.
 function Components.dynamic_children(rpc, iface, comp)
   local reply, code = rpc("get_dynamic_children", { iface = iface, comp = comp })
   if reply == nil then return nil, code end

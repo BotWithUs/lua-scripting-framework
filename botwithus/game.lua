@@ -29,7 +29,7 @@ local Game = {}
 Game.__index = Game
 
 -- The agent snapshot protocol this framework is written for. It moves in lockstep with
--- native-scripting-host's BWU_PROTOCOL_VERSION (and NXTLibrary's kProtocolVersion).
+-- the native host's protocol version (and the agent's).
 Game.PROTOCOL_VERSION = 25
 
 -- Why a host built for another protocol is refused, or nil when it matches: the surface's
@@ -536,7 +536,7 @@ function Game:interface_tree(iface, comp) return Components.tree(rpc_of(self), i
 function Game:component_at(x, y) return Components.at(rpc_of(self), x, y) end
 
 -- ---- Host ABI 6: GE offers, worlds and hop, target mode and use-on, projection, children with
--- sub ids, scripts (NXTLibrary 0f746b4; PUBLIC_PROTOCOL.md 6.2.1, 6.2.2, 6.3.1, 6.7, 6.8) ----
+-- sub ids, scripts ----
 --
 -- The native host gained these at BWU_ABI_VERSION 6. On an older host each raises naming the ABI
 -- it needs. A refusal or no answer is nil, code (the agent's code verbatim, or "rpc_timeout").
@@ -803,9 +803,9 @@ end
 -- :walk_start,
 --   { disabled_moves = W.moves_mask(W.MOVE_CHARTERS), exclude = { 42 }, exclude_loc_siblings = true,
 --     avoid = { W.around(3222, 3218, 4, 0) } }
--- `avoid` (native ABI 7, WorldWalker #44) lists areas the walker never routes through (see
--- botwithus.walk: area / box / around); a bwu_host older than ABI 7 refuses it here, and a
--- worldwalker.dll older than #44 with the host's "cannot avoid areas".
+-- `avoid` (native ABI 7) lists areas the walker never routes through (see
+-- botwithus.walk: area / box / around); a bwu_host older than ABI 7 refuses it here, and an
+-- older worldwalker.dll without avoid areas with the host's "cannot avoid areas".
 -- (W = botwithus.walk). `exclude` lists transition indices (result.fail_transition,
 -- transition.transition_index) the planner must not use, on every plan and re-plan of the
 -- walk. nil, or a table with every field at its default, makes exactly the call made before
