@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 — 2026-11-21
 
 - **Tests: the fake host drops queued events on unsubscribe (no framework change).**
   `spec/fake_bwu.lua`'s `ui_unsubscribe` now discards that hook's queued events for the handle
