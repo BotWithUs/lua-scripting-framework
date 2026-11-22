@@ -1,6 +1,6 @@
 -- spec/game_ui_p2_spec.lua -- botwithus.game_ui P2: the interactive types, hook subscriptions
 -- and their typed arguments, against the fake bwu.ui_* surface (spec/fake_bwu.lua), which
--- keeps the agent's P2 rules and refusal texts (NXTLibrary a17edc4, native host 7bb38a4).
+-- keeps the agent's P2 rules and refusal texts.
 
 local fake_bwu = require("spec.fake_bwu")
 local bot      = require("botwithus")

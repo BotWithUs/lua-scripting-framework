@@ -1,10 +1,9 @@
 -- Live plugin-UI P2 smoke for botwithus.game_ui: bwu_host --lua tests/live/ui_smoke_p2.lua
 --
 -- Written against this framework's API only (bot.run, ctx.ui, ui.Panel.new, comp:Subscribe,
--- ...), never the raw bwu.ui_* bindings. Needs a client in the world with an agent from
--- NXTLibrary a17edc4 or later, and a bwu_host with bwu.ui_subscribe (native-scripting-host
--- 7bb38a4). It follows the native host's p2 live smoke contract (tests/live/ui_smoke_p2.lua
--- there), so that host's driver, ui_smoke_run.py --mode p2, can run it. Environment:
+-- ...), never the raw bwu.ui_* bindings. Needs a client in the world with an agent
+-- that has plugin-UI P2, and a bwu_host with bwu.ui_subscribe (1.1.0 or later). It follows the
+-- native host's p2 live smoke contract, so that host's p2 smoke driver can run it. Environment:
 --   BWU_SMOKE_PID   the client pid (default: the first discovered client)
 --   BWU_SMOKE_OUT   a file this script writes its results to, one "key=value" per line
 --
@@ -13,7 +12,7 @@
 -- on the slider and the list and ONCONTENTCHANGED on the input field, and sets values again
 -- through the script API. The client raises hook 50 for a content set, so a typed
 -- ONCONTENTCHANGED callback must run with (reason CONTENT_CHANGE, content). A slider value or a
--- list selection set raises nothing (PUBLIC_PROTOCOL 6.12), so the script counts any
+-- list selection set raises nothing, so the script counts any
 -- ONSELECTIONCHANGED and the driver checks there were none. No click: the only click path is a
 -- debug-only agent verb, which scripts never use.
 -- It writes the panel's key and "ready=1", runs until BWU_SMOKE_OUT .. ".go" exists, and ends

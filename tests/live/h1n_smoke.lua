@@ -1,7 +1,7 @@
 -- Live smoke for the host ABI 6 calls: bwu_host --lua tests/live/h1n_smoke.lua
 --
 -- Written against this framework's API (Game, botwithus.worlds, botwithus.target). Needs a client
--- in the world whose agent has NXTLibrary 0f746b4 or later, and a bwu_host at ABI 6. It changes
+-- in the world whose agent has the ABI 6 RPCs (1.1.0 release or later), and a bwu_host at ABI 6. It changes
 -- world once and uses one backpack item on another, so run it only on a disposable character.
 -- Environment:
 --   BWU_SMOKE_PID        the client pid (default: the first discovered client)

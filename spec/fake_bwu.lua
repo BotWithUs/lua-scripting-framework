@@ -1,8 +1,8 @@
 -- spec/fake_bwu.lua -- an injectable stand-in for the native `bwu` global.
 --
 -- Lets the whole API be exercised with no game client and no native host: install it
--- as _G.bwu, drive the facade, assert. Mirrors the shapes native-scripting-host's
--- host_surface.c returns.
+-- as _G.bwu, drive the facade, assert. Mirrors the shapes the native
+-- host returns.
 
 local M = {}
 
@@ -230,8 +230,8 @@ function M.new(opts)
     return false, "did not arrive"
   end
   function bwu.walk_cancel(_) state.walk_cancelled = true end
-  -- Walk progress, in the real binding's table shape (native-scripting-host's
-  -- tests/bindings/walk_check.lua reads the same fields). opts.walk_progress is the result
+  -- Walk progress, in the real binding's table shape (the native host's own
+  -- binding tests read the same fields). opts.walk_progress is the result
   -- table (nil = never walked / refuses a start); opts.walk_events the event list.
   -- opts.no_walk_progress leaves these out, like a bwu_host that predates them.
   if not opts.no_walk_progress then
@@ -349,7 +349,7 @@ local UI_LATER_PROPS = {
   vis_mode = "ui prop not supported yet: vis_mode (a non-zero mode marks the field restricted)",
 }
 M.UI_LATER_PROPS = UI_LATER_PROPS
--- Refusal texts as the agent's (NXTLibrary a17edc4, src/rpc/UiWidgetProps.cpp, UiRegistry.cpp).
+-- Refusal texts as the agent's.
 M.UI_CHECK_LABEL = "ui prop not supported yet: label on check (its text sub-object is not mapped)"
 M.UI_LIST_LIMIT = "ui: more ids selected than the list's selection_limit allows (limit 1: one; limit L > 1: L - 1)"
 M.UI_SLIDER_VALUE = "ui: slider value refused (needs min <= value <= max and value % step == 0)"
@@ -366,7 +366,7 @@ local UI_PROPS = { x = "integer", y = "integer", width = "integer", height = "in
                    text = "string", x_parent_pc = "float", x_self_pc = "float",
                    y_parent_pc = "float", y_self_pc = "float", width_pc = "float",
                    height_pc = "float", enabled = "boolean",
-                   -- P2 (NXTLibrary a17edc4)
+                   -- P2
                    label = "string", can_toggle = "boolean", toggled = "boolean",
                    checked = "boolean", content = "string", filter = "string",
                    max_length = "integer", min = "integer", max = "integer", step = "integer",
@@ -501,7 +501,7 @@ end
 
 -- ---- host ABI 6: GE offers, worlds and hop, target mode and use-on, projection, children with
 -- sub ids, scripts ----
--- Replies have the native embed's shapes (native-scripting-host src/embed_lua_client.c). Every
+-- Replies have the native embed's shapes. Every
 -- call is recorded in bwu._abi6.calls as { fn, args... }. opts.ge_offers / world_list /
 -- target_mode / hop replace a reply; a string plays the agent refusing with that code.
 local function abi6_defaults(opts)
@@ -598,9 +598,9 @@ function M.install_abi6(bwu, opts)
 end
 
 -- Host ABI 7: cache definitions, world map elements, avoid areas and route links, in the shape
--- src/embed_lua_cache.c / embed_lua.c return. Every value differs from a zeroed default.
+-- the native host returns. Every value differs from a zeroed default.
 --   opts.no_cache       a host whose cache cannot open: every read is nil, "NXTCache.dll not found ..."
---   opts.cannot_avoid   a worldwalker.dll before WorldWalker #44: a walk or path with areas, and any
+--   opts.cannot_avoid   an older worldwalker.dll without avoid areas: a walk or path with areas, and any
 --                       path_route, raise the host's refusal
 -- bwu._abi7 = { calls = { {name, ...}, ... }, item_reads = n }.
 local ABI7_ITEMS = {
@@ -749,7 +749,7 @@ local function ui_type_ok(kind, v)
 end
 
 -- opts.ui_p1 = true installs the P1 surface only (no ui_subscribe / ui_unsubscribe / ui_blur, and
--- the interactive types refused), as a host before native-scripting-host 7bb38a4.
+-- the interactive types refused), as a host before 1.1.0.
 function M.install_ui(bwu, opts)
   opts = opts or {}
   local ui = { next_handle = 100, comps = {}, calls = {}, events = {}, used = {},

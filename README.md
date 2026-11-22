@@ -343,7 +343,7 @@ Options are never silently ignored:
 - An exclusion on a worldwalker.dll that cannot honour it raises "cannot exclude
   transitions". `g:walk_options_supported()` tells you in advance.
 
-**Avoid areas and route links (host ABI 7, WorldWalker #44).** `avoid = { ... }` in the same table
+**Avoid areas and route links (host ABI 7).** `avoid = { ... }` in the same table
 lists tile rectangles the walker never routes through (`W.area(min_x, min_y, max_x, max_y[,
 plane])`, `W.box(x1, y1, x2, y2[, plane])`, `W.around(x, y, r[, plane])`; no plane means every
 plane; at most 64). No walk step lands on one, no door, boat or teleport is taken that starts or
@@ -361,7 +361,7 @@ for _, link in ipairs(route.links) do print(link.kind, link.name, link.to.x, lin
 ```
 
 Areas are refused, never ignored: on a bwu_host older than ABI 7 (`g:has_avoid()` false) here, and
-on a worldwalker.dll older than WorldWalker #44 with the host's "cannot avoid areas". An empty
+on an older worldwalker.dll without avoid areas with the host's "cannot avoid areas". An empty
 `avoid` is the old call.
 
 ## Cache definitions and the world map (host ABI 7)

@@ -2,7 +2,7 @@
 --
 -- Cache definitions, world map elements, an avoid-area plan and route links through this
 -- framework, against a client in the world and a bwu_host at ABI 7 with NXTCache.dll and a
--- worldwalker.dll from WorldWalker #44 or later in BWU_NATIVE_DIR. It only reads and plans: it
+-- worldwalker.dll with avoid areas in BWU_NATIVE_DIR. It only reads and plans: it
 -- walks nowhere and clicks nothing.
 -- Environment:
 --   BWU_SMOKE_PID   the client pid (default: the first discovered client)

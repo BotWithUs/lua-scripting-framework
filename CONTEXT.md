@@ -44,7 +44,7 @@ CI (`.github/workflows/test.yml`) installs `lua5.4` on ubuntu-latest and runs th
 ## Compatibility note
 
 The action ids and surface field names in `botwithus.actions` / `botwithus.game` mirror the
-native host's `include/bwu_host_surface.h`. The action builders send exactly the param shapes
+native host's C surface. The action builders send exactly the param shapes
 the Python framework's builders send, and the specs pin the packed values. If that surface changes, update these to match;
 `spec/fake_bwu.lua` is the shape contract the tests pin.
 

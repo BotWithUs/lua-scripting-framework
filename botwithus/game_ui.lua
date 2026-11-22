@@ -19,8 +19,8 @@
 --
 -- What is supported now: Canvas, Rectangle, Line, Text and Layer; position, size, rgba,
 -- clickthrough, enabled, the line, rectangle and text properties; the canvas shapes;
--- MoveToFront / MoveToBack; Destroy; and the DESTROYED hook. P2 (an agent from NXTLibrary
--- a17edc4 and a host with bwu.ui_subscribe): the interactive types Button, Check, InputField,
+-- MoveToFront / MoveToBack; Destroy; and the DESTROYED hook. P2 (an agent with plugin-UI
+-- P2 and a host with bwu.ui_subscribe): the interactive types Button, Check, InputField,
 -- Slider, ComboField, List, Panel and Grid with the properties and methods the wire carries,
 -- and the hooks ONCLICK, ONRELEASE, ONMOUSEOVER, ONMOUSELEAVE, ONBUTTONPRESSED,
 -- ONCONTENTCHANGED and ONSELECTIONCHANGED, whose callbacks get Jagex's arguments (see
@@ -47,7 +47,7 @@
 -- other script shares it. When a bot.run ends (or a GUI worker's run), the framework releases
 -- them with ONE ui.destroy_all on that connection, before it detaches, and every held component
 -- is forgotten as "released" (its DESTROYED callbacks run). One call, so a stalled agent costs
--- one timeout, not one per component. A host from 61e65ab on sends no second ui.destroy_all at
+-- one timeout, not one per component. A host from 1.1.0 on sends no second ui.destroy_all at
 -- detach once that release emptied its records (an older one sends one that finds nothing); the
 -- agent releases what is left at pipe close. comp:Destroy() is the only per-handle destroy.
 -- A component the game took down (its parent closed, logout) is announced by a "destroyed"
@@ -127,7 +127,7 @@ local function wire_hook(hook)
   return WIRE_HOOKS[hook]
 end
 
--- Jagex's enums for the hook arguments, numbered as the agent sends them (PUBLIC_PROTOCOL 6.12).
+-- Jagex's enums for the hook arguments, numbered as the agent sends them.
 -- NONE is Jagex's; the agent never sends it (its reasons are 0..4), so it is -1 here and never
 -- equals a reason a callback receives.
 local INPUT_ACTION_RESULT = { NONE = -1, CONTENT_CHANGE = 0, ERROR = 1, SUBMIT = 2, SUBMIT_ON_ESCAPE = 3,
@@ -517,7 +517,7 @@ Component._info_fields = {
   key = "key", isJagex = "jagex",
 }
 
--- The agent's refusal to read a restricted component's content (UiRegistry, a17edc4).
+-- The agent's refusal to read a restricted component's content.
 local RESTRICTED_CONTENT = "ui: content of a restricted component cannot be read"
 
 -- `content` of a text or an input field. A restricted input field (a password field) reads as
@@ -791,7 +791,7 @@ local function needs_p2(what)
 end
 
 -- No Jagex "fire the hook" option: a set through the agent never raises the client's change
--- hook (PUBLIC_PROTOCOL 6.12), so triggerEvents = true cannot be honoured.
+-- hook, so triggerEvents = true cannot be honoured.
 local function no_trigger(what, trigger)
   if trigger then unsupported(what .. " with triggerEvents") end
 end

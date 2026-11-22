@@ -76,8 +76,8 @@ Colours are always `0xRRGGBBAA` integers.
 
 ## Interactive components (P2)
 
-Needs an agent from NXTLibrary `a17edc4` or later and a native host with `bwu.ui_subscribe`
-(native-scripting-host `7bb38a4`). On an older host the hooks and the entry helpers raise
+Needs an agent with plugin-UI P2 support and a native host with `bwu.ui_subscribe` (native host
+1.1.0 or later). On an older host the hooks and the entry helpers raise
 `not supported yet (this host has no P2 plugin-UI surface)`, and an older agent refuses the
 types with its own text.
 
@@ -218,7 +218,7 @@ it. When a `bot.run` (or a GUI run) ends, the framework releases them with **one
 `ui.destroy_all` on that connection, before it detaches. One call, so a stalled agent costs a
 single timeout however many components there are. Every component it held is then forgotten as
 `released` and its `DESTROYED` callbacks run, whatever the agent answered. When the host then
-detaches, it holds no component, so it sends no second `ui.destroy_all` (native host `61e65ab`
+detaches, it holds no component, so it sends no second `ui.destroy_all` (native host 1.1.0
 or later; an older host sends one that finds nothing). The host still sends one if the agent may
 still hold a component: the framework's `ui.destroy_all` failed, or a ui call went unanswered
 after it. The agent releases
