@@ -127,6 +127,17 @@ function M.new(opts)
   -- The v25 entity reads. opts.overhead_texts and opts.headbars map "<kind>:<index>" -> reply
   -- table, or -> a string code the agent refuses with; an unlisted target is not_found.
   -- opts.hint_arrows is the reply list, or a string code.
+  -- The session plan (bwu.session_pacing). opts.session_pacing is the reply table, a string
+  -- code the host fails with, or false for a host that predates the function.
+  state.session_pacing_calls = 0
+  if opts.session_pacing ~= false then
+    local reply = opts.session_pacing or { active = false, held = false, next_press_in_ms = 0 }
+    function bwu.session_pacing(_)
+      state.session_pacing_calls = state.session_pacing_calls + 1
+      if type(reply) == "string" then return nil, reply end
+      return reply
+    end
+  end
   state.overhead_texts = opts.overhead_texts or {}
   state.headbars = opts.headbars or {}
   state.hint_arrows = opts.hint_arrows or { truncated = false }

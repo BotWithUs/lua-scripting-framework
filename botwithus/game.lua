@@ -16,6 +16,7 @@ local Components = require("botwithus.components")
 local GrandExchange = require("botwithus.grand_exchange")
 local Worlds = require("botwithus.worlds")
 local Target = require("botwithus.target")
+local Timing = require("botwithus.timing")
 
 -- Resolve the surface each call. `_G.bwu` is set by the host (or a test fake).
 -- host(self), further down, is the guard every per-client call goes through.
@@ -327,6 +328,41 @@ end
 -- Returns nil, code on refusal, as overhead_text.
 function Game:headbars(kind, index)
   return entity_read("headbars")(host(self), kind, index)
+end
+
+-- What the agent's session layer has planned for action timing (agent RPC
+-- get_humanizer_session; the Java host's GameAPI.sessionPacing). Read-only. One round trip.
+--   active             true while the agent owns action timing: it holds each queued action
+--                      until its planned press, and plans idle runs, rests and breaks itself
+--   held               an action is held under the plan
+--   next_press_in_ms   until the held action's press, break included; 0 when nothing is held
+--   break              nil, or { carrier = "held_action"|"next_action", starts_in_ms,
+--                      length_ms }: the break inside the held action, or the one already
+--                      planned for the next action this script dispatches (starts_in_ms 0,
+--                      it starts when that action is queued). The agent never skips a break.
+-- An agent without the layer, or a native host without bwu.session_pacing, reads
+-- { active = false, held = false, next_press_in_ms = 0 }. Returns nil, code only when the
+-- transport failed.
+function Game:session_pacing()
+  local read = surface().session_pacing
+  if type(read) ~= "function" then
+    return { active = false, held = false, next_press_in_ms = 0 }
+  end
+  return read(host(self))
+end
+
+-- The fewest ticks paced_ticks returns while the agent owns timing: one server tick, so a loop
+-- never spins on a zero delay. The agent plans gaps from the previous press, so a loop that
+-- wakes inside that gap adds nothing to it.
+Game.MIN_DEFERRED_TICKS = 1
+
+-- The delay, in server ticks, to return from on_loop: `ticks` when the agent does not own
+-- timing, else the ticks until its next planned press (at least MIN_DEFERRED_TICKS), so a
+-- script's own pacing never stacks on the agent's plan. A failed read paces as `ticks`.
+function Game:paced_ticks(ticks)
+  local p = self:session_pacing()
+  if not p or not p.active then return ticks end
+  return math.max(Game.MIN_DEFERRED_TICKS, math.ceil(p.next_press_in_ms / Timing.TICK_MS))
 end
 
 -- Every hint arrow (wire v25 RPC query_hint_arrows), in the manager's slots and its owner tree.
